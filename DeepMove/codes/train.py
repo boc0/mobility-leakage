@@ -3,6 +3,9 @@
 
 
 import torch
+# device selection: prefer MPS, then CUDA, else CPU
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
 from torch.autograd import Variable
 
 import numpy as np
@@ -301,24 +304,21 @@ def run_simple(data, run_idx, mode, lr, clip, model, optimizer, criterion, mode2
         u, i = run_queue.popleft()
         if u not in users_acc:
             users_acc[u] = [0, 0]
-        loc = data[u][i]['loc'].cuda()
-        tim = data[u][i]['tim'].cuda()
-        target = data[u][i]['target'].cuda()
-        uid = Variable(torch.LongTensor([u])).cuda()
+        loc = data[u][i]['loc'].to(device)
+        tim = data[u][i]['tim'].to(device)
+        target = data[u][i]['target'].to(device)
+        uid = Variable(torch.LongTensor([u])).to(device)
 
         if 'attn' in mode2:
-            history_loc = data[u][i]['history_loc'].cuda()
-            history_tim = data[u][i]['history_tim'].cuda()
+            history_loc = data[u][i]['history_loc'].to(device)
+            history_tim = data[u][i]['history_tim'].to(device)
 
         if mode2 in ['simple', 'simple_long']:
             scores = model(loc, tim)
         elif mode2 == 'attn_avg_long_user':
-            history_count = data[u][i]['history_count']
-            target_len = target.data.size()[0]
-            scores = model(loc, tim, history_loc, history_tim, history_count, uid, target_len)
+            scores = model(loc, tim, data[u][i]['history_loc'].to(device), data[u][i]['history_tim'].to(device), data[u][i]['history_count'], uid, data[u][i]['target'].size(0))
         elif mode2 == 'attn_local_long':
-            target_len = target.data.size()[0]
-            scores = model(loc, tim, target_len)
+            scores = model(loc, tim, data[u][i]['target'].size(0))
 
         if scores.data.size()[0] > target.data.size()[0]:
             scores = scores[-target.data.size()[0]:]
@@ -339,7 +339,7 @@ def run_simple(data, run_idx, mode, lr, clip, model, optimizer, criterion, mode2
             users_acc[u][0] += len(target)
             acc = get_acc(target, scores)
             users_acc[u][1] += acc[2]
-        total_loss.append(loss.data.cpu().numpy()[0])
+        total_loss.append(loss.data.cpu().numpy())
 
     avg_loss = np.mean(total_loss, dtype=np.float64)
     if mode == 'train':

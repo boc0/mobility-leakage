@@ -3,6 +3,9 @@
 
 
 import torch
+# device selection: prefer MPS, then CUDA, else CPU
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
 import torch.nn as nn
 import torch.optim as optim
 
@@ -40,11 +43,11 @@ def run(args):
         parameters.model_mode, parameters.history_mode, parameters.uid_size))
 
     if parameters.model_mode in ['simple', 'simple_long']:
-        model = TrajPreSimple(parameters=parameters).cuda()
+        model = TrajPreSimple(parameters=parameters).to(device)
     elif parameters.model_mode == 'attn_avg_long_user':
-        model = TrajPreAttnAvgLongUser(parameters=parameters).cuda()
+        model = TrajPreAttnAvgLongUser(parameters=parameters).to(device)
     elif parameters.model_mode == 'attn_local_long':
-        model = TrajPreLocalAttnLong(parameters=parameters).cuda()
+        model = TrajPreLocalAttnLong(parameters=parameters).to(device)
     if args.pretrain == 1:
         model.load_state_dict(torch.load("../pretrain/" + args.model_mode + "/res.m"))
 
@@ -55,7 +58,7 @@ def run(args):
     else:
         parameters.history_mode = 'whole'
 
-    criterion = nn.NLLLoss().cuda()
+    criterion = nn.NLLLoss().to(device)
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=parameters.lr,
                            weight_decay=parameters.L2)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=parameters.lr_step,
@@ -181,7 +184,6 @@ class Settings(object):
 if __name__ == '__main__':
     np.random.seed(1)
     torch.manual_seed(1)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--loc_emb_size', type=int, default=500, help="location embeddings size")

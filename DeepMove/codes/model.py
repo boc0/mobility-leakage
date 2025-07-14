@@ -5,6 +5,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+# auto-select MPS (for M1/M2), then CUDA, else CPU
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 from torch.autograd import Variable
 
 
@@ -54,11 +56,9 @@ class TrajPreSimple(nn.Module):
             nn.init.constant(t, 0)
 
     def forward(self, loc, tim):
-        h1 = Variable(torch.zeros(1, 1, self.hidden_size))
-        c1 = Variable(torch.zeros(1, 1, self.hidden_size))
-        if self.use_cuda:
-            h1 = h1.cuda()
-            c1 = c1.cuda()
+        # initialize hidden states on correct device
+        h1 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
+        c1 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
 
         loc_emb = self.emb_loc(loc)
         tim_emb = self.emb_tim(tim)
@@ -98,7 +98,8 @@ class Attn(nn.Module):
     def forward(self, out_state, history):
         seq_len = history.size()[0]
         state_len = out_state.size()[0]
-        attn_energies = Variable(torch.zeros(state_len, seq_len)).cuda()
+        # initialize attention energies on correct device
+        attn_energies = Variable(torch.zeros(state_len, seq_len, device=device))
         for i in range(state_len):
             for j in range(seq_len):
                 attn_energies[i, j] = self.score(out_state[i], history[j])
@@ -170,11 +171,9 @@ class TrajPreAttnAvgLongUser(nn.Module):
             nn.init.constant(t, 0)
 
     def forward(self, loc, tim, history_loc, history_tim, history_count, uid, target_len):
-        h1 = Variable(torch.zeros(1, 1, self.hidden_size))
-        c1 = Variable(torch.zeros(1, 1, self.hidden_size))
-        if self.use_cuda:
-            h1 = h1.cuda()
-            c1 = c1.cuda()
+        # initialize hidden states on correct device
+        h1 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
+        c1 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
 
         loc_emb = self.emb_loc(loc)
         tim_emb = self.emb_tim(tim)
@@ -184,8 +183,9 @@ class TrajPreAttnAvgLongUser(nn.Module):
         loc_emb_history = self.emb_loc(history_loc).squeeze(1)
         tim_emb_history = self.emb_tim(history_tim).squeeze(1)
         count = 0
-        loc_emb_history2 = Variable(torch.zeros(len(history_count), loc_emb_history.size()[-1])).cuda()
-        tim_emb_history2 = Variable(torch.zeros(len(history_count), tim_emb_history.size()[-1])).cuda()
+        # prepare history embeddings on correct device
+        loc_emb_history2 = Variable(torch.zeros(len(history_count), loc_emb_history.size()[-1], device=device))
+        tim_emb_history2 = Variable(torch.zeros(len(history_count), tim_emb_history.size()[-1], device=device))
         for i, c in enumerate(history_count):
             if c == 1:
                 tmp = loc_emb_history[count].unsqueeze(0)
@@ -270,15 +270,11 @@ class TrajPreLocalAttnLong(nn.Module):
             nn.init.constant(t, 0)
 
     def forward(self, loc, tim, target_len):
-        h1 = Variable(torch.zeros(1, 1, self.hidden_size))
-        h2 = Variable(torch.zeros(1, 1, self.hidden_size))
-        c1 = Variable(torch.zeros(1, 1, self.hidden_size))
-        c2 = Variable(torch.zeros(1, 1, self.hidden_size))
-        if self.use_cuda:
-            h1 = h1.cuda()
-            h2 = h2.cuda()
-            c1 = c1.cuda()
-            c2 = c2.cuda()
+        # initialize hidden and cell states on correct device
+        h1 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
+        h2 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
+        c1 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
+        c2 = Variable(torch.zeros(1, 1, self.hidden_size, device=device))
 
         loc_emb = self.emb_loc(loc)
         tim_emb = self.emb_tim(tim)
