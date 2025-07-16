@@ -26,7 +26,8 @@ def entropy_spatial(sessions):
 
 class DataFoursquare(object):
     def __init__(self, data_path, save_name='foursquare', trace_min=10, global_visit=10, hour_gap=72, min_gap=10, session_min=2, session_max=10,
-                 sessions_min=2, train_split=0.8, embedding_len=50):
+                 sessions_min=2, train_split=0.8, embedding_len=50, test=False):
+        self.test = test
         tmp_path = "data/"
         # self.TWITTER_PATH = tmp_path + 'foursquare/tweets_clean.txt'
         self.TWITTER_PATH = data_path
@@ -42,6 +43,10 @@ class DataFoursquare(object):
         self.filter_short_session = session_min
         self.sessions_count_min = sessions_min
         self.words_embeddings_len = embedding_len
+
+        if self.test:
+            self.hour_gap = 200 # more than a week, which is the max in our data
+            self.sessions_count_min = 1
 
         self.train_split = train_split
 
@@ -64,7 +69,7 @@ class DataFoursquare(object):
     def load_trajectory_from_tweets(self):
         with open(self.TWITTER_PATH) as fid:
             for i, line in enumerate(fid):
-                _, uid, _, _, tim, _, _, tweet, pid = line.strip('\r\n').split('')
+                uid, _, _, tim, _, _, tweet, pid = line.strip('\r\n').split('')
                 if uid not in self.data:
                     self.data[uid] = [[pid, tim]]
                 else:
@@ -141,7 +146,7 @@ class DataFoursquare(object):
     def load_venues(self):
         with open(self.TWITTER_PATH, 'r') as fid:
             for line in fid:
-                _, uid, lon, lat, tim, _, _, tweet, pid = line.strip('\r\n').split('')
+                uid, lon, lat, tim, _, _, tweet, pid = line.strip('\r\n').split('')
                 self.pid_loc_lat[pid] = [float(lon), float(lat)]
 
     def venues_lookup(self):
@@ -170,16 +175,25 @@ class DataFoursquare(object):
         for u in self.uid_list:
             sessions = self.data_filter[u]['sessions']
             sessions_tran = {}
+           # collect transformed sessions and their ids
             sessions_id = []
             for sid in sessions:
-                sessions_tran[sid] = [[self.vid_list[p[0]][0], self.tid_list_48(p[1])] for p in
-                                      sessions[sid]]
+                sessions_tran[sid] = [
+                    [self.vid_list[p[0]][0], self.tid_list_48(p[1])]
+                    for p in sessions[sid]
+                ]
                 sessions_id.append(sid)
-            split_id = int(np.floor(self.train_split * len(sessions_id)))
-            train_id = sessions_id[:split_id]
-            test_id = sessions_id[split_id:]
-            pred_len = sum([len(sessions_tran[i]) - 1 for i in train_id])
-            valid_len = sum([len(sessions_tran[i]) - 1 for i in test_id])
+            # if in test mode, skip train/test split: train on all, no test set
+            if self.test:
+                train_id = sessions_id.copy()
+                test_id = []
+            else:
+                split_id = int(np.floor(self.train_split * len(sessions_id)))
+                train_id = sessions_id[:split_id]
+                test_id = sessions_id[split_id:]
+            pred_len = sum(len(sessions_tran[i]) - 1 for i in train_id)
+            # no validation length if no test set
+            valid_len = sum(len(sessions_tran[i]) - 1 for i in test_id) if test_id else 0
             train_loc = {}
             for i in train_id:
                 for sess in sessions_tran[i]:
@@ -255,10 +269,12 @@ def parse_args():
     parser.add_argument('--session_min', type=int, default=5, help="control the length of session not too short")
     parser.add_argument('--sessions_min', type=int, default=5, help="the minimum amount of the good user's sessions")
     parser.add_argument('--train_split', type=float, default=0.8, help="train/test ratio")
-    parser.add_argument('--data_path', type=str, default='../data/foursquare/tweets_clean.txt', 
+    parser.add_argument('--data_path', type=str, default='data/foursquare/tweets_clean.txt', 
                         help="path to the input trajectory data")
     parser.add_argument('--save_name', type=str, default='foursquare', 
                         help="name of the saved dataset file")
+    parser.add_argument('--test', type=bool, default=False,
+                        help="set to True for the test data")
     return parser.parse_args()
 
 
@@ -267,7 +283,8 @@ if __name__ == '__main__':
     data_generator = DataFoursquare(data_path=args.data_path, save_name=args.save_name, trace_min=args.trace_min, global_visit=args.global_visit,
                                     hour_gap=args.hour_gap, min_gap=args.min_gap,
                                     session_min=args.session_min, session_max=args.session_max,
-                                    sessions_min=args.sessions_min, train_split=args.train_split)
+                                    sessions_min=args.sessions_min, train_split=args.train_split,
+                                    test=args.test)
     parameters = data_generator.get_parameters()
     print('############PARAMETER SETTINGS:\n' + '\n'.join([p + ':' + str(parameters[p]) for p in parameters]))
     print('############START PROCESSING:')
