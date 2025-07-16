@@ -25,13 +25,14 @@ def entropy_spatial(sessions):
 
 
 class DataFoursquare(object):
-    def __init__(self, trace_min=10, global_visit=10, hour_gap=72, min_gap=10, session_min=2, session_max=10,
+    def __init__(self, data_path, save_name='foursquare', trace_min=10, global_visit=10, hour_gap=72, min_gap=10, session_min=2, session_max=10,
                  sessions_min=2, train_split=0.8, embedding_len=50):
-        tmp_path = "../data/"
-        self.TWITTER_PATH = tmp_path + 'foursquare/tweets_clean.txt'
-        self.VENUES_PATH = tmp_path + 'foursquare/venues_all.txt'
+        tmp_path = "data/"
+        # self.TWITTER_PATH = tmp_path + 'foursquare/tweets_clean.txt'
+        self.TWITTER_PATH = data_path
+        # self.VENUES_PATH = tmp_path + 'foursquare/venues_all.txt'
         self.SAVE_PATH = tmp_path
-        self.save_name = 'foursquare'
+        self.save_name = save_name
 
         self.trace_len_min = trace_min
         self.location_global_visit_min = global_visit
@@ -254,12 +255,16 @@ def parse_args():
     parser.add_argument('--session_min', type=int, default=5, help="control the length of session not too short")
     parser.add_argument('--sessions_min', type=int, default=5, help="the minimum amount of the good user's sessions")
     parser.add_argument('--train_split', type=float, default=0.8, help="train/test ratio")
+    parser.add_argument('--data_path', type=str, default='../data/foursquare/tweets_clean.txt', 
+                        help="path to the input trajectory data")
+    parser.add_argument('--save_name', type=str, default='foursquare', 
+                        help="name of the saved dataset file")
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
-    data_generator = DataFoursquare(trace_min=args.trace_min, global_visit=args.global_visit,
+    data_generator = DataFoursquare(data_path=args.data_path, save_name=args.save_name, trace_min=args.trace_min, global_visit=args.global_visit,
                                     hour_gap=args.hour_gap, min_gap=args.min_gap,
                                     session_min=args.session_min, session_max=args.session_max,
                                     sessions_min=args.sessions_min, train_split=args.train_split)

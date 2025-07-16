@@ -8,9 +8,9 @@ device = torch.device("mps") if torch.backends.mps.is_available() else torch.dev
 
 import torch.nn as nn
 import torch.optim as optim
+import json
 
 import os
-import json
 import time
 import argparse
 import numpy as np
@@ -24,6 +24,11 @@ from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
 
 def run(args):
+    # load metadata for sizes if provided
+    if hasattr(args, 'metadata_json') and args.metadata_json:
+        meta = json.load(open(args.metadata_json, 'r'))
+    else:
+        meta = None
     parameters = RnnParameterData(loc_emb_size=args.loc_emb_size, uid_emb_size=args.uid_emb_size,
                                   voc_emb_size=args.voc_emb_size, tim_emb_size=args.tim_emb_size,
                                   hidden_size=args.hidden_size, dropout_p=args.dropout_p,
@@ -32,6 +37,10 @@ def run(args):
                                   optim=args.optim, attn_type=args.attn_type,
                                   clip=args.clip, epoch_max=args.epoch_max, history_mode=args.history_mode,
                                   model_mode=args.model_mode, data_path=args.data_path, save_path=args.save_path)
+    # override sizes from metadata
+    if meta:
+        parameters.loc_size = len(meta['pid_mapping'])
+        parameters.uid_size = len(meta.get('usersz', []))
     argv = {'loc_emb_size': args.loc_emb_size, 'uid_emb_size': args.uid_emb_size, 'voc_emb_size': args.voc_emb_size,
             'tim_emb_size': args.tim_emb_size, 'hidden_size': args.hidden_size,
             'dropout_p': args.dropout_p, 'data_name': args.data_name, 'learning_rate': args.learning_rate,
@@ -94,7 +103,7 @@ def run(args):
                                                        len([y for x in test_idx for y in test_idx[x]])))
     SAVE_PATH = args.save_path
     tmp_path = 'checkpoint/'
-    os.mkdir(SAVE_PATH + tmp_path)
+    os.makedirs(SAVE_PATH + tmp_path, exist_ok=True)
     for epoch in range(parameters.epoch):
         st = time.time()
         if args.pretrain == 0:
@@ -203,11 +212,12 @@ if __name__ == '__main__':
     parser.add_argument('--history_mode', type=str, default='avg', choices=['max', 'avg', 'whole'])
     parser.add_argument('--rnn_type', type=str, default='LSTM', choices=['LSTM', 'GRU', 'RNN'])
     parser.add_argument('--attn_type', type=str, default='dot', choices=['general', 'concat', 'dot'])
-    parser.add_argument('--data_path', type=str, default='../data/')
-    parser.add_argument('--save_path', type=str, default='../results/')
+    parser.add_argument('--data_path', type=str, default='data/')
+    parser.add_argument('--save_path', type=str, default='results/')
     parser.add_argument('--model_mode', type=str, default='simple_long',
                         choices=['simple', 'simple_long', 'attn_avg_long_user', 'attn_local_long'])
-    parser.add_argument('--pretrain', type=int, default=1)
+    parser.add_argument('--pretrain', type=int, default=0)
+    parser.add_argument('--metadata_json', type=str, default='data/foursquare/metadata.json', help="path to metadata json file")
     args = parser.parse_args()
     if args.pretrain == 1:
         args = load_pretrained_model(args)
