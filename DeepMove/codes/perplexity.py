@@ -86,6 +86,7 @@ if __name__ == '__main__':
     sessions_all = data['data_neural']
     vid_list     = data['vid_list']
     uid_list     = data['uid_list']
+    tids = [int(k) for k in uid_list.keys()]
 
     # build parameter object
     params = RnnParameterData()
@@ -115,12 +116,12 @@ if __name__ == '__main__':
     # prepare output
     if args.output:
         out_f = open(args.output, 'w')
-        out_f.write("user,session,perplexity\n")
+        out_f.write("tid,perplexity\n")
     else:
         out_f = None
 
     # iterate and compute
-    for u, udata in sessions_all.items():
+    for (u, udata), tid in zip(sessions_all.items(), tids):
         # map user label to embedded index
         uid_idx = user_to_idx.get(u, None)
         # sessions stored as dict session_id → [(loc, tim), ...]
@@ -138,7 +139,7 @@ if __name__ == '__main__':
                 model, loc_seq, tim_seq, target_loc,
                 args.model_mode, uid_idx
             )
-            line = f"{u},{sess_id},{ppl:.3f}"
+            line = f"{tid},{ppl:.3f}" # sess_id is always 0 when we have 1 traj per user
             if out_f:
                 out_f.write(line + "\n")
             else:
