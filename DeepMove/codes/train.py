@@ -61,8 +61,6 @@ def generate_input_history(data_neural, mode, mode2=None, candidate=None):
         train_id = data_neural[u][mode]
         data_train[u] = {}
         for c, i in enumerate(train_id):
-            if mode == 'train' and c == 0:
-                continue
             session = sessions[i]
             trace = {}
             loc_np = np.reshape(np.array([s[0] for s in session[:-1]]), (len(session[:-1]), 1))
@@ -226,9 +224,14 @@ def generate_queue(train_idx, mode, mode2):
         initial_queue = {}
         for u in user:
             if mode2 == 'train':
-                initial_queue[u] = deque(train_idx[u][1:])
+                # only drop the first session if there are others
+                if len(train_idx[u]) > 1:
+                    initial_queue[u] = deque(train_idx[u][1:])
+                else:
+                    initial_queue[u] = deque(train_idx[u])
             else:
                 initial_queue[u] = deque(train_idx[u])
+
         queue_left = 1
         while queue_left > 0:
             np.random.shuffle(user)
@@ -333,15 +336,18 @@ def run_simple(data, run_idx, mode, lr, clip, model, optimizer, criterion, mode2
                     if p.requires_grad:
                         p.data.add_(-lr, p.grad.data)
             except:
-                pass
+                raise
             optimizer.step()
         elif mode == 'test':
             users_acc[u][0] += len(target)
             acc = get_acc(target, scores)
             users_acc[u][1] += acc[2]
         total_loss.append(loss.data.cpu().numpy())
+        # print(len(total_loss))
 
+    # print(len(total_loss))
     avg_loss = np.mean(total_loss, dtype=np.float64)
+    # print(avg_loss)
     if mode == 'train':
         return model, avg_loss
     elif mode == 'test':

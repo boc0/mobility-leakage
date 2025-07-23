@@ -30,7 +30,7 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
             axis=1
         )
         result = pd.DataFrame()
-        result['uid'] = df['label']
+        result['tid'] = df['tid']
         result['lat'] = df['lat']
         result['lon'] = df['lon']
         result['timestamp'] = df['timestamp']
@@ -50,7 +50,7 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
             axis=1
         )
         result = pd.DataFrame()
-        result['uid'] = df['tid']
+        result['tid'] = df['tid']
         result['lat'] = df['lat']
         result['lon'] = df['lon']
         result['timestamp'] = df['timestamp']

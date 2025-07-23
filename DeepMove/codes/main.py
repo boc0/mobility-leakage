@@ -77,8 +77,8 @@ def run(args):
     metrics = {'train_loss': [], 'valid_loss': [], 'accuracy': [], 'valid_acc': {}}
 
     candidate = list(parameters.data_neural.keys())
-    avg_acc_markov, users_acc_markov = markov(parameters, candidate)
-    metrics['markov_acc'] = users_acc_markov
+    # avg_acc_markov, users_acc_markov = markov(parameters, candidate)
+    # metrics['markov_acc'] = users_acc_markov
 
     if 'long' in parameters.model_mode:
         long_history = True
@@ -98,7 +98,7 @@ def run(args):
             data_train, train_idx = generate_input_long_history(parameters.data_neural, 'train', candidate=candidate)
             data_test, test_idx = generate_input_long_history(parameters.data_neural, 'test', candidate=candidate)
 
-    print('users:{} markov:{} train:{} test:{}'.format(len(candidate), avg_acc_markov,
+    print('users:{} markov:{} train:{} test:{}'.format(len(candidate), None,
                                                        len([y for x in train_idx for y in train_idx[x]]),
                                                        len([y for x in test_idx for y in test_idx[x]])))
     SAVE_PATH = args.save_path
@@ -202,9 +202,9 @@ if __name__ == '__main__':
     parser.add_argument('--hidden_size', type=int, default=500)
     parser.add_argument('--dropout_p', type=float, default=0.3)
     parser.add_argument('--data_name', type=str, default='foursquare')
-    parser.add_argument('--learning_rate', type=float, default=5 * 1e-4)
-    parser.add_argument('--lr_step', type=int, default=2)
-    parser.add_argument('--lr_decay', type=float, default=0.1)
+    parser.add_argument('--learning_rate', type=float, default=1/3 * 1e-3)
+    parser.add_argument('--lr_step', type=int, default=4, help="how many epochs before reducing learning rate")
+    parser.add_argument('--lr_decay', type=float, default=1/3)
     parser.add_argument('--optim', type=str, default='Adam', choices=['Adam', 'SGD'])
     parser.add_argument('--L2', type=float, default=1 * 1e-5, help=" weight decay (L2 penalty)")
     parser.add_argument('--clip', type=float, default=5.0)

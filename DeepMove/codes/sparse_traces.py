@@ -25,8 +25,8 @@ def entropy_spatial(sessions):
 
 
 class DataFoursquare(object):
-    def __init__(self, data_path, save_name='foursquare', trace_min=10, global_visit=10, hour_gap=72, min_gap=10, session_min=2, session_max=10,
-                 sessions_min=2, train_split=0.8, embedding_len=50, test=False):
+    def __init__(self, data_path, save_name='foursquare', trace_min=1, global_visit=1, hour_gap=72, min_gap=10, session_min=2, session_max=100,
+                 sessions_min=1, train_split=0.8, embedding_len=50, test=False):
         self.test = test
         tmp_path = "data/"
         # self.TWITTER_PATH = tmp_path + 'foursquare/tweets_clean.txt'
@@ -172,7 +172,13 @@ class DataFoursquare(object):
         return tid
 
     def prepare_neural_data(self):
-        for u in self.uid_list:
+        # ---- USER-LEVEL train/test split (no user overlap) ----
+        all_users = sorted(self.data_filter.keys())
+        n_train   = int(self.train_split * len(all_users))
+        train_users = set(all_users[:n_train])
+        test_users  = set(all_users[n_train:])
+
+        for u in all_users:
             sessions = self.data_filter[u]['sessions']
             sessions_tran = {}
            # collect transformed sessions and their ids
@@ -183,14 +189,13 @@ class DataFoursquare(object):
                     for p in sessions[sid]
                 ]
                 sessions_id.append(sid)
-            # if in test mode, skip train/test split: train on all, no test set
-            if self.test:
+            # assign all sessions of u to train or to test (users disjoint)
+            if u in train_users:
                 train_id = sessions_id.copy()
-                test_id = []
+                test_id  = []
             else:
-                split_id = int(np.floor(self.train_split * len(sessions_id)))
-                train_id = sessions_id[:split_id]
-                test_id = sessions_id[split_id:]
+                train_id = []
+                test_id  = sessions_id.copy()
             pred_len = sum(len(sessions_tran[i]) - 1 for i in train_id)
             # no validation length if no test set
             valid_len = sum(len(sessions_tran[i]) - 1 for i in test_id) if test_id else 0
@@ -225,15 +230,18 @@ class DataFoursquare(object):
                 except:
                     print(pid)
                     print('error')
+            '''
             lon_lat = np.array(lon_lat)
             center = np.mean(lon_lat, axis=0, keepdims=True)
             center = np.repeat(center, axis=0, repeats=len(lon_lat))
             rg = np.sqrt(np.mean(np.sum((lon_lat - center) ** 2, axis=1, keepdims=True), axis=0))[0]
-
+            '''
             self.data_neural[self.uid_list[u][0]] = {'sessions': sessions_tran, 'train': train_id, 'test': test_id,
                                                      'pred_len': pred_len, 'valid_len': valid_len,
                                                      'train_loc': train_loc, 'explore': location_ratio,
-                                                     'entropy': entropy, 'rg': rg}
+                                                     'entropy': entropy}#, 'rg': rg}
+
+        print('train users: {}, test users: {}'.format(len(train_users), len(test_users)))
 
     # ############# 6. save variables
     def get_parameters(self):
@@ -261,13 +269,20 @@ class DataFoursquare(object):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--trace_min', type=int, default=10, help="raw trace length filter threshold")
-    parser.add_argument('--global_visit', type=int, default=10, help="location global visit threshold")
-    parser.add_argument('--hour_gap', type=int, default=72, help="maximum interval of two trajectory points")
-    parser.add_argument('--min_gap', type=int, default=10, help="minimum interval of two trajectory points")
-    parser.add_argument('--session_max', type=int, default=10, help="control the length of session not too long")
-    parser.add_argument('--session_min', type=int, default=5, help="control the length of session not too short")
-    parser.add_argument('--sessions_min', type=int, default=5, help="the minimum amount of the good user's sessions")
+    parser.add_argument('--trace_min',   type=int, default=0,
+                        help="raw trace length filter threshold (0 = keep all)")
+    parser.add_argument('--global_visit',type=int, default=0,
+                        help="location global visit threshold (0 = keep all)")
+    parser.add_argument('--hour_gap',    type=int, default=200,
+                        help="max hours between points before new session (>=168 disables)")
+    parser.add_argument('--min_gap',     type=int, default=0,
+                        help="min minutes between points to stay in session (0 disables)")
+    parser.add_argument('--session_max', type=int, default=10000,
+                        help="max points per session (large disables)")
+    parser.add_argument('--session_min', type=int, default=1,
+                        help="min points per session (1 keeps all)")
+    parser.add_argument('--sessions_min',type=int, default=1,
+                        help="min sessions per user (1 keeps all users)")
     parser.add_argument('--train_split', type=float, default=0.8, help="train/test ratio")
     parser.add_argument('--data_path', type=str, default='data/foursquare/tweets_clean.txt', 
                         help="path to the input trajectory data")
