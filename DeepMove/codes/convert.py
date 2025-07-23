@@ -23,19 +23,20 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
 
     # helper to convert a df and output path
     def to_deepmove(df, out_path):
-        # timestamp conversion
-        start_date = datetime(2025, 6, 30)
-        df['timestamp'] = df.apply(
-            lambda row: (start_date + timedelta(days=row['day'], hours=row['hour'])).strftime('%Y-%m-%d %H:%M:%S'),
-            axis=1
-        )
+        # use existing timestamp if present; otherwise convert from day/hour
+        if 'timestamp' not in df.columns:
+            start_date = datetime(2025, 6, 30)
+            df['timestamp'] = df.apply(
+                lambda row: (start_date + timedelta(days=row['day'], hours=row['hour'])).strftime('%Y-%m-%d %H:%M:%S'),
+                axis=1
+            )
         result = pd.DataFrame()
         result['tid'] = df['tid']
         result['lat'] = df['lat']
         result['lon'] = df['lon']
         result['timestamp'] = df['timestamp']
         result['offset'] = '0'
-        result['venue_cat'] = df['category']
+        # result['venue_cat'] = df['category']
         result['tweet'] = 'tweet'
         result['pid'] = df['pid']
         result.to_csv(out_path, sep='\u0001', header=False, index=False, encoding='utf-8')
@@ -43,19 +44,20 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
     
 
     def to_deepmove_test(df, out_path):
-        # timestamp conversion
-        start_date = datetime(2025, 6, 30)
-        df['timestamp'] = df.apply(
-            lambda row: (start_date + timedelta(days=row['day'], hours=row['hour'])).strftime('%Y-%m-%d %H:%M:%S'),
-            axis=1
-        )
+        # use existing timestamp if present; otherwise convert from day/hour
+        if 'timestamp' not in df.columns:
+            start_date = datetime(2025, 6, 30)
+            df['timestamp'] = df.apply(
+                lambda row: (start_date + timedelta(days=row['day'], hours=row['hour'])).strftime('%Y-%m-%d %H:%M:%S'),
+                axis=1
+            )
         result = pd.DataFrame()
         result['tid'] = df['tid']
         result['lat'] = df['lat']
         result['lon'] = df['lon']
         result['timestamp'] = df['timestamp']
         result['offset'] = '0'
-        result['venue_cat'] = df['category']
+        # result['venue_cat'] = df['category']
         result['tweet'] = 'tweet'
         result['pid'] = df['pid']
         result.to_csv(out_path, sep='\u0001', header=False, index=False, encoding='utf-8')
@@ -71,7 +73,7 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
     # write metadata.json instead of venues.json
     metadata_file = os.path.join(os.path.dirname(train_out_txt), 'metadata.json')
     # instead we will save a list of the unique user IDs
-    users = pd.concat([df_train['label'], df_test['label']]).unique().tolist()
+    users = pd.concat([df_train['tid'], df_test['tid']]).unique().tolist()
     metadata = {
         "pid_mapping": pid_mapping,
         "users": users,
