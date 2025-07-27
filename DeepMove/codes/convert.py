@@ -35,9 +35,7 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
         result['lat'] = df['lat']
         result['lon'] = df['lon']
         result['timestamp'] = df['timestamp']
-        result['offset'] = '0'
         # result['venue_cat'] = df['category']
-        result['tweet'] = 'tweet'
         result['pid'] = df['pid']
         result.to_csv(out_path, sep='\u0001', header=False, index=False, encoding='utf-8')
         print(f"Saved {len(df)} records to {out_path}.")
@@ -56,9 +54,7 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
         result['lat'] = df['lat']
         result['lon'] = df['lon']
         result['timestamp'] = df['timestamp']
-        result['offset'] = '0'
         # result['venue_cat'] = df['category']
-        result['tweet'] = 'tweet'
         result['pid'] = df['pid']
         result.to_csv(out_path, sep='\u0001', header=False, index=False, encoding='utf-8')
         print(f"Saved {len(df)} records to {out_path}.")
@@ -85,9 +81,9 @@ def convert_csv_to_deepmove_format(train_csv_path, test_csv_path, train_out_txt,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--train_csv',  type=str, default='../data/train.csv', help='train CSV file')
-    parser.add_argument('--test_csv',   type=str, default='../data/test.csv', help='test CSV file')
-    parser.add_argument('--train_txt',  type=str, default='data/foursquare/tweets_clean.txt', help='output train txt')
-    parser.add_argument('--test_txt',   type=str, default='data/foursquare/tweets_test.txt',  help='output test txt')
+    parser.add_argument('--train_csv', type=str, help='train CSV file', required=True)
+    parser.add_argument('--secondary_csv', type=str, help='test CSV file', required=True)
+    parser.add_argument('--train_txt', type=str, help='output train txt', required=True)
+    parser.add_argument('--secondary_txt', type=str, help='output test txt', required=True)
     args = parser.parse_args()
-    convert_csv_to_deepmove_format(args.train_csv, args.test_csv, args.train_txt, args.test_txt)
+    convert_csv_to_deepmove_format(args.train_csv, args.secondary_csv, args.train_txt, args.secondary_txt)

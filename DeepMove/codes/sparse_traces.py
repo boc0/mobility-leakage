@@ -1,11 +1,9 @@
-
-
-
 import time
 import argparse
 import numpy as np
 import pickle as pickle
 from collections import Counter
+import json
 
 
 def entropy_spatial(sessions):
@@ -25,15 +23,15 @@ def entropy_spatial(sessions):
 
 
 class DataFoursquare(object):
-    def __init__(self, data_path, save_name='foursquare', trace_min=1, global_visit=1, hour_gap=72, min_gap=10, session_min=2, session_max=100,
-                 sessions_min=1, train_split=0.8, embedding_len=50, test=False):
-        self.test = test
+    def __init__(self, data_path, save_path='data/foursquare', trace_min=1, global_visit=1, hour_gap=72, min_gap=10, session_min=2, session_max=100,
+                 sessions_min=1, train_split=0.8, embedding_len=50, secondary=False, metadata_json=None):
+        self.secondary = secondary
+        self.metadata_json = metadata_json
         tmp_path = "data/"
         # self.TWITTER_PATH = tmp_path + 'foursquare/tweets_clean.txt'
         self.TWITTER_PATH = data_path
         # self.VENUES_PATH = tmp_path + 'foursquare/venues_all.txt'
-        self.SAVE_PATH = tmp_path
-        self.save_name = save_name
+        self.SAVE_PATH = save_path
 
         self.trace_len_min = trace_min
         self.location_global_visit_min = global_visit
@@ -43,10 +41,6 @@ class DataFoursquare(object):
         self.filter_short_session = session_min
         self.sessions_count_min = sessions_min
         self.words_embeddings_len = embedding_len
-
-        if self.test:
-            self.hour_gap = 200 # more than a week, which is the max in our data
-            self.sessions_count_min = 1
 
         self.train_split = train_split
 
@@ -65,11 +59,29 @@ class DataFoursquare(object):
         self.pid_loc_lat = {}
         self.data_neural = {}
 
+        if self.metadata_json:
+            self.load_metadata()
+
+    def load_metadata(self):
+        """Load pid_mapping and users from metadata.json."""
+        print(f"Loading metadata from {self.metadata_json}")
+        with open(self.metadata_json, 'r') as f:
+            meta = json.load(f)
+        # pid_mapping is pid -> [lat, lon]
+        # we need pid -> [vid, count] and pid -> [lon, lat]
+        pid_mapping = meta.get('pid_mapping', {})
+        self.pid_loc_lat = {pid: [lon, lat] for pid, (lat, lon) in pid_mapping.items()}
+        # Pre-populate vid_list from the metadata
+        for i, pid in enumerate(pid_mapping.keys()):
+            # Assign a new vid, initialize count to 0. Count will be updated later.
+            self.vid_list[pid] = [i + 1, 0] # +1 to reserve 0 for 'unk'
+        print(f"Loaded {len(self.vid_list)} locations from metadata.")
+
     # ############# 1. read trajectory data from twitters
     def load_trajectory_from_tweets(self):
         with open(self.TWITTER_PATH) as fid:
             for i, line in enumerate(fid):
-                uid, _, _, tim, _, tweet, pid = line.strip('\r\n').split('')
+                uid, _, _, tim, pid = line.strip('\r\n').split('')
                 if uid not in self.data:
                     self.data[uid] = [[pid, tim]]
                 else:
@@ -137,6 +149,7 @@ class DataFoursquare(object):
                 poi = [p[0] for p in sessions[sid]]
                 for p in poi:
                     if p not in self.vid_list:
+                        # This should not happen if metadata is complete
                         self.vid_list_lookup[len(self.vid_list)] = p
                         self.vid_list[p] = [len(self.vid_list), 1]
                     else:
@@ -146,7 +159,7 @@ class DataFoursquare(object):
     def load_venues(self):
         with open(self.TWITTER_PATH, 'r') as fid:
             for line in fid:
-                uid, lon, lat, tim, _, tweet, pid = line.strip('\r\n').split('')
+                uid, lon, lat, tim, pid = line.strip('\r\n').split('')
                 self.pid_loc_lat[pid] = [float(lon), float(lat)]
 
     def venues_lookup(self):
@@ -264,7 +277,8 @@ class DataFoursquare(object):
         foursquare_dataset = {'data_neural': self.data_neural, 'vid_list': self.vid_list, 'uid_list': self.uid_list,
                               'parameters': self.get_parameters(), 'data_filter': self.data_filter,
                               'vid_lookup': self.vid_lookup}
-        pickle.dump(foursquare_dataset, open(self.SAVE_PATH + self.save_name + '.pk', 'wb'))
+        # pickle.dump(foursquare_dataset, open(self.SAVE_PATH + self.save_name + '.pk', 'wb'))
+        pickle.dump(foursquare_dataset, open(self.SAVE_PATH, 'wb'))
 
 
 def parse_args():
@@ -284,22 +298,24 @@ def parse_args():
     parser.add_argument('--sessions_min',type=int, default=1,
                         help="min sessions per user (1 keeps all users)")
     parser.add_argument('--train_split', type=float, default=0.8, help="train/test ratio")
-    parser.add_argument('--data_path', type=str, default='data/foursquare/tweets_clean.txt', 
+    parser.add_argument('--data_path', type=str, 
                         help="path to the input trajectory data")
-    parser.add_argument('--save_name', type=str, default='foursquare', 
+    parser.add_argument('--save_path', type=str,
                         help="name of the saved dataset file")
-    parser.add_argument('--test', type=bool, default=False,
-                        help="set to True for the test data")
+    parser.add_argument('--secondary', type=bool, default=False,
+                        help="set to True for the secondary dataset (what we will compute perplexity on)")
+    parser.add_argument('--metadata_json', type=str, default=None,
+                        help="path to metadata json file to load existing pid mapping")
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
-    data_generator = DataFoursquare(data_path=args.data_path, save_name=args.save_name, trace_min=args.trace_min, global_visit=args.global_visit,
+    data_generator = DataFoursquare(data_path=args.data_path, save_path=args.save_path, trace_min=args.trace_min, global_visit=args.global_visit,
                                     hour_gap=args.hour_gap, min_gap=args.min_gap,
                                     session_min=args.session_min, session_max=args.session_max,
                                     sessions_min=args.sessions_min, train_split=args.train_split,
-                                    test=args.test)
+                                    secondary=args.secondary, metadata_json=args.metadata_json)
     parameters = data_generator.get_parameters()
     print('############PARAMETER SETTINGS:\n' + '\n'.join([p + ':' + str(parameters[p]) for p in parameters]))
     print('############START PROCESSING:')
@@ -309,7 +325,8 @@ if __name__ == '__main__':
     data_generator.filter_users_by_length()
     print('build users/locations dictionary')
     data_generator.build_users_locations_dict()
-    data_generator.load_venues()
+    if not args.metadata_json:
+        data_generator.load_venues()
     data_generator.venues_lookup()
     print('prepare data for neural network')
     data_generator.prepare_neural_data()

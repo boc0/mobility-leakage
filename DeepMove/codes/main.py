@@ -25,10 +25,12 @@ from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
 def run(args):
     # load metadata for sizes if provided
-    if hasattr(args, 'metadata_json') and args.metadata_json:
-        meta = json.load(open(args.metadata_json, 'r'))
+    save_dir = args.save_dir
+    meta = os.path.join(save_dir, 'metadata.json')
+    if os.path.exists(meta):
+        meta = json.load(open(meta, 'r'))
     else:
-        meta = None
+        raise FileNotFoundError(f"Metadata file not found at {meta}. Please provide a valid metadata file.")
     parameters = RnnParameterData(loc_emb_size=args.loc_emb_size, uid_emb_size=args.uid_emb_size,
                                   voc_emb_size=args.voc_emb_size, tim_emb_size=args.tim_emb_size,
                                   hidden_size=args.hidden_size, dropout_p=args.dropout_p,
@@ -36,7 +38,7 @@ def run(args):
                                   lr_step=args.lr_step, lr_decay=args.lr_decay, L2=args.L2, rnn_type=args.rnn_type,
                                   optim=args.optim, attn_type=args.attn_type,
                                   clip=args.clip, epoch_max=args.epoch_max, history_mode=args.history_mode,
-                                  model_mode=args.model_mode, data_path=args.data_path, save_path=args.save_path)
+                                  model_mode=args.model_mode, data_path=args.data_path, save_dir=args.save_dir)
     # override sizes from metadata
     if meta:
         parameters.loc_size = len(meta['pid_mapping'])
@@ -101,9 +103,9 @@ def run(args):
     print('users:{} markov:{} train:{} test:{}'.format(len(candidate), None,
                                                        len([y for x in train_idx for y in train_idx[x]]),
                                                        len([y for x in test_idx for y in test_idx[x]])))
-    SAVE_PATH = args.save_path
+    save_dir = args.save_dir
     tmp_path = 'checkpoint/'
-    os.makedirs(SAVE_PATH + tmp_path, exist_ok=True)
+    os.makedirs(save_dir + tmp_path, exist_ok=True)
     for epoch in range(parameters.epoch):
         st = time.time()
         if args.pretrain == 0:
@@ -121,7 +123,7 @@ def run(args):
         metrics['valid_acc'][epoch] = users_acc
 
         save_name_tmp = 'ep_' + str(epoch) + '.m'
-        torch.save(model.state_dict(), SAVE_PATH + tmp_path + save_name_tmp)
+        torch.save(model.state_dict(), save_dir + tmp_path + save_name_tmp)
 
         scheduler.step(avg_acc)
         lr_last = lr
@@ -129,7 +131,7 @@ def run(args):
         if lr_last > lr:
             load_epoch = np.argmax(metrics['accuracy'])
             load_name_tmp = 'ep_' + str(load_epoch) + '.m'
-            model.load_state_dict(torch.load(SAVE_PATH + tmp_path + load_name_tmp))
+            model.load_state_dict(torch.load(save_dir + tmp_path + load_name_tmp))
             print('load epoch={} model state'.format(load_epoch))
         if epoch == 0:
             print('single epoch time cost:{}'.format(time.time() - st))
@@ -141,20 +143,20 @@ def run(args):
     mid = np.argmax(metrics['accuracy'])
     avg_acc = metrics['accuracy'][mid]
     load_name_tmp = 'ep_' + str(mid) + '.m'
-    model.load_state_dict(torch.load(SAVE_PATH + tmp_path + load_name_tmp))
+    model.load_state_dict(torch.load(save_dir + tmp_path + load_name_tmp))
     save_name = 'res'
-    json.dump({'args': argv, 'metrics': metrics}, fp=open(SAVE_PATH + save_name + '.rs', 'w'), indent=4)
+    json.dump({'args': argv, 'metrics': metrics}, fp=open(save_dir + save_name + '.rs', 'w'), indent=4)
     metrics_view = {'train_loss': [], 'valid_loss': [], 'accuracy': []}
     for key in metrics_view:
         metrics_view[key] = metrics[key]
-    json.dump({'args': argv, 'metrics': metrics_view}, fp=open(SAVE_PATH + save_name + '.txt', 'w'), indent=4)
-    torch.save(model.state_dict(), SAVE_PATH + save_name + '.m')
+    json.dump({'args': argv, 'metrics': metrics_view}, fp=open(save_dir + save_name + '.txt', 'w'), indent=4)
+    torch.save(model.state_dict(), save_dir + save_name + '.m')
 
-    for rt, dirs, files in os.walk(SAVE_PATH + tmp_path):
+    for rt, dirs, files in os.walk(save_dir + tmp_path):
         for name in files:
             remove_path = os.path.join(rt, name)
             os.remove(remove_path)
-    os.rmdir(SAVE_PATH + tmp_path)
+    os.rmdir(save_dir + tmp_path)
 
     return avg_acc
 
@@ -168,7 +170,7 @@ def load_pretrained_model(config):
 class Settings(object):
     def __init__(self, config, res):
         self.data_path = config.data_path
-        self.save_path = config.save_path
+        self.save_dir = config.save_dir
         self.data_name = res["data_name"]
         self.epoch_max = res["epoch_max"]
         self.learning_rate = res["learning_rate"]
@@ -213,11 +215,15 @@ if __name__ == '__main__':
     parser.add_argument('--rnn_type', type=str, default='LSTM', choices=['LSTM', 'GRU', 'RNN'])
     parser.add_argument('--attn_type', type=str, default='dot', choices=['general', 'concat', 'dot'])
     parser.add_argument('--data_path', type=str, default='data/')
-    parser.add_argument('--save_path', type=str, default='results/')
+    parser.add_argument('--save_dir', type=str, default='rez/')
+    parser.add_argument('--save_model_path', type=str,
+                        help="path to save the trained model")
     parser.add_argument('--model_mode', type=str, default='simple_long',
                         choices=['simple', 'simple_long', 'attn_avg_long_user', 'attn_local_long'])
     parser.add_argument('--pretrain', type=int, default=0)
-    parser.add_argument('--metadata_json', type=str, default='data/foursquare/metadata.json', help="path to metadata json file")
+    # parser.add_argument('--metadata_json', type=str, default='data/foursquare/metadata.json', help="path to metadata json file")
+    parser.add_argument('--pretrain_model_path', type=str, default='../pretrain/simple_long/res.m',
+                        help="path to pretrained model file")
     args = parser.parse_args()
     if args.pretrain == 1:
         args = load_pretrained_model(args)
