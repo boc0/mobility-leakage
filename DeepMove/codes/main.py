@@ -24,9 +24,8 @@ from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
 
 def run(args):
-    # load metadata for sizes if provided
-    save_dir = args.save_dir
-    meta = os.path.join(save_dir, 'metadata.json')
+    # load metadata from json argument
+    meta = args.metadata_json
     if os.path.exists(meta):
         meta = json.load(open(meta, 'r'))
     else:
@@ -42,7 +41,7 @@ def run(args):
     # override sizes from metadata
     if meta:
         parameters.loc_size = len(meta['pid_mapping'])
-        parameters.uid_size = len(meta.get('usersz', []))
+        parameters.uid_size = len(meta.get('users', []))
     argv = {'loc_emb_size': args.loc_emb_size, 'uid_emb_size': args.uid_emb_size, 'voc_emb_size': args.voc_emb_size,
             'tim_emb_size': args.tim_emb_size, 'hidden_size': args.hidden_size,
             'dropout_p': args.dropout_p, 'data_name': args.data_name, 'learning_rate': args.learning_rate,
@@ -145,18 +144,18 @@ def run(args):
     load_name_tmp = 'ep_' + str(mid) + '.m'
     model.load_state_dict(torch.load(save_dir + tmp_path + load_name_tmp))
     save_name = 'res'
-    json.dump({'args': argv, 'metrics': metrics}, fp=open(save_dir + save_name + '.rs', 'w'), indent=4)
+    json.dump({'args': argv, 'metrics': metrics}, fp=open(os.path.join(save_dir, save_name + '.rs'), 'w'), indent=4)
     metrics_view = {'train_loss': [], 'valid_loss': [], 'accuracy': []}
     for key in metrics_view:
         metrics_view[key] = metrics[key]
-    json.dump({'args': argv, 'metrics': metrics_view}, fp=open(save_dir + save_name + '.txt', 'w'), indent=4)
-    torch.save(model.state_dict(), save_dir + save_name + '.m')
+    json.dump({'args': argv, 'metrics': metrics_view}, fp=open(os.path.join(save_dir, save_name + '.txt'), 'w'), indent=4)
+    torch.save(model.state_dict(), os.path.join(save_dir, save_name + '.m'))
 
-    for rt, dirs, files in os.walk(save_dir + tmp_path):
+    for rt, dirs, files in os.walk(os.path.join(save_dir, tmp_path)):
         for name in files:
             remove_path = os.path.join(rt, name)
             os.remove(remove_path)
-    os.rmdir(save_dir + tmp_path)
+    os.rmdir(os.path.join(save_dir, tmp_path))
 
     return avg_acc
 
@@ -221,7 +220,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_mode', type=str, default='simple_long',
                         choices=['simple', 'simple_long', 'attn_avg_long_user', 'attn_local_long'])
     parser.add_argument('--pretrain', type=int, default=0)
-    # parser.add_argument('--metadata_json', type=str, default='data/foursquare/metadata.json', help="path to metadata json file")
+    parser.add_argument('--metadata_json', type=str, default='data/foursquare/metadata.json', help="path to metadata json file")
     parser.add_argument('--pretrain_model_path', type=str, default='../pretrain/simple_long/res.m',
                         help="path to pretrained model file")
     args = parser.parse_args()

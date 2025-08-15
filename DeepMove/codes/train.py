@@ -11,20 +11,32 @@ from torch.autograd import Variable
 import numpy as np
 import pickle as pickle
 from collections import deque, Counter
-
+import json
 
 class RnnParameterData(object):
     def __init__(self, loc_emb_size=500, uid_emb_size=40, voc_emb_size=50, tim_emb_size=10, hidden_size=500,
                  lr=1e-3, lr_step=3, lr_decay=0.1, dropout_p=0.5, L2=1e-5, clip=5.0, optim='Adam',
                  history_mode='avg', attn_type='dot', epoch_max=30, rnn_type='LSTM', model_mode="simple",
-                 data_path='data/', save_dir='../results/', data_name='foursquare'):
+                 data_path='data/', save_dir='../results/', data_name='foursquare', metadata=None):
         self.data_path = data_path
         self.save_dir = save_dir
         self.data_name = data_name
-        data = pickle.load(open(self.data_path, 'rb'))
-        self.vid_list = data['vid_list']
-        self.uid_list = data['uid_list']
-        self.data_neural = data['data_neural']
+        try:
+            data = pickle.load(open(self.data_path, 'rb'))
+        except Exception as e:
+            try:
+                metadata = json.load(open(metadata, 'r'))
+                # print(metadata.keys()) # keys are ['pid_mapping', 'users']
+                self.vid_list = metadata['pid_mapping'].keys()
+                self.uid_list = metadata['users']
+            except Exception as e:
+                raise
+                raise ValueError(f"Failed to load data from {self.data_path}. Error: {e}")
+
+        else:
+            self.vid_list = data['vid_list']
+            self.uid_list = data['uid_list']
+            self.data_neural = data['data_neural']
 
         self.tim_size = 48
         self.loc_size = len(self.vid_list)
@@ -333,7 +345,8 @@ def run_simple(data, run_idx, mode, lr, clip, model, optimizer, criterion, mode2
             try:
                 torch.nn.utils.clip_grad_norm(model.parameters(), clip)
                 for p in model.parameters():
-                    if p.requires_grad:
+                    # skip params with no gradient
+                    if p.requires_grad and p.grad is not None:
                         p.data.add_(-lr, p.grad.data)
             except:
                 raise
