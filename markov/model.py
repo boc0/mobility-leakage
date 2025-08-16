@@ -12,6 +12,8 @@ class MarkovModel:
         self.transitions = defaultdict(lambda: defaultdict(int))
         self.graph = nx.DiGraph()
         self.max_state_probs = dict()
+        # global symbol vocabulary (next-state support for smoothing)
+        self.vocab = set()
 
 
     def save_json(self, filepath):
@@ -73,6 +75,8 @@ class MarkovModel:
     def train(self, corpus):
         for sentence in corpus:
             words = sentence.split()
+            for w in words:
+                self.vocab.add(w)
             for i in range(len(words) - self.state_size):
                 state = tuple(words[i:i+self.state_size]) 
                 next_state = words[i+self.state_size]
@@ -113,7 +117,27 @@ class MarkovModel:
             likelihood *= transition_count / state_count if state_count > 0 else 0
         return likelihood
 
-    def log_perplexity(self, sequence): raise NotImplementedError
+    def likelihood_with_smoothing(self, sequence, alpha=1.0):
+        """
+        Additive (Laplace) smoothing for transition probabilities:
+        P = (count(state→next) + alpha) / (count(state) + alpha * V)
+        where V is the number of possible next symbols (global vocab size).
+        """
+        words = sequence.split()
+        likelihood = 1.0
+        V = max(1, len(self.vocab))  # avoid divide-by-zero
+        for i in range(len(words) - self.state_size):
+            state = tuple(words[i:i+self.state_size])
+            next_state = words[i+self.state_size]
+            if state in self.states:
+                state_count = self.states[state]
+                transition_count = self.transitions.get(state, {}).get(next_state, 0)
+            else:
+                state_count = 0
+                transition_count = 0
+            prob = (transition_count + alpha) / (state_count + alpha * V)
+            likelihood *= prob
+        return likelihood
     
     def geometric_mean_likelihood(self, sequence):
         words = sequence.split()
