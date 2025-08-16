@@ -112,6 +112,8 @@ class MarkovModel:
             state_count = self.states[state]
             likelihood *= transition_count / state_count if state_count > 0 else 0
         return likelihood
+
+    def log_perplexity(self, sequence): raise NotImplementedError
     
     def geometric_mean_likelihood(self, sequence):
         words = sequence.split()

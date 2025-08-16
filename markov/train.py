@@ -1,5 +1,8 @@
 import pickle
-from markov_model import MarkovModel
+import argparse
+from model import MarkovModel
+
+
 
 def prepare_corpus_from_deepmove(data_pickle_path):
     """
@@ -33,8 +36,17 @@ def prepare_corpus_from_deepmove(data_pickle_path):
     return corpus
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Train a MarkovModel on DeepMove .pk data and save to JSON')
+    parser.add_argument('--data_pk', '--data', dest='data_pk', type=str, required=True,
+                        help='Path to processed DeepMove .pk file (from sparse_traces.py)')
+    parser.add_argument('--save_model', type=str, default='markov_model.json',
+                        help='Path to save trained Markov model JSON (default: markov_model.json)')
+    parser.add_argument('--state_size', type=int, default=1,
+                        help='Markov state size (order). 1 = first-order (default)')
+    args = parser.parse_args()
+
     # 1. Define the path to the output file from sparse_traces.py
-    processed_data_path = 'DeepMove/data/foursquare.pk' # Or whatever you named it
+    processed_data_path = args.data_pk
 
     # 2. Prepare the corpus
     trajectory_corpus = prepare_corpus_from_deepmove(processed_data_path)
@@ -42,23 +54,23 @@ if __name__ == '__main__':
     # 3. Initialize and train the Markov Model
     # state_size=1 means it predicts the next location based on the last one.
     # state_size=2 would use the last two locations.
-    markov = MarkovModel(state_size=1)
+    markov = MarkovModel(state_size=args.state_size)
     print("Training Markov model...")
     markov.train(trajectory_corpus)
     print("Training complete.")
 
     # 4. Save the trained model
-    model_save_path = 'markov_model.json'
+    model_save_path = args.save_model
     markov.save_json(model_save_path)
 
-    # 5. Load the model from the file
+    # 5. Load the model from the file (sanity check)
     loaded_markov = MarkovModel.load_json(model_save_path)
 
     # Now the loaded model is ready to be used
     if loaded_markov.states:
         generated_sequence = loaded_markov.generate(length=4)
         print(f"Generated sequence from loaded model: {generated_sequence}")
-        likelihood = loaded_markov.likelihood(generated_sequence)
+        likelihood = loaded_markov.log_likelihood(generated_sequence)
         print(f"Likelihood of generated sequence: {likelihood}")
     else:
         print("No states were learned, cannot generate a sequence.")
