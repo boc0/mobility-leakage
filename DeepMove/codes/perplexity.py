@@ -7,6 +7,8 @@ import json
 import torch
 import torch.nn as nn
 
+from tqdm import tqdm
+
 from train import RnnParameterData
 from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
@@ -63,7 +65,8 @@ def trajectory_perplexity(model, loc_seq, tim_seq, target_seq, model_mode, uid):
         nll = loss_fn(scores, tgt).item()
 
     # perplexity = exp( avg nll per token )
-    return math.exp(nll / len(target_seq))
+    # return math.exp(nll / len(target_seq))
+    return nll / len(target_seq)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -153,18 +156,23 @@ if __name__ == '__main__':
 
         data = pickle.load(open(pk_file, 'rb'))
         sessions_all = data['data_neural']
-        tids = [int(k) for k in data['uid_list'].keys()]
+        uid_list = data['uid_list']  # mapping: original_label -> [embedded_idx]
+        # Build mapping: embedded_idx -> original_label
+        idx_to_user = {v[0]: k for k, v in uid_list.items()}
 
-        for (u, udata), tid in zip(sessions_all.items(), tids):
-            # map user label to embedded index
-            uid_idx = user_to_idx.get(u, None)
+        # Build metadata user->idx using string keys to avoid type mismatches
+        # (metadata users may be strings; uid_list keys may be ints)
+        # user_to_idx is already built above; rebuild with str keys for safety:
+        meta = json.load(open(args.metadata_json, 'r'))
+        user_to_idx = {str(u): i for i, u in enumerate(meta.get('users', []))}
+
+        for u_idx, udata in tqdm(sessions_all.items()):
+            # map embedded uid index -> original user label -> metadata uid index
+            label = idx_to_user.get(u_idx, None)
+            uid_idx = user_to_idx.get(str(label), None)
             if uid_idx is None:
-                # This can happen if the user from the .pk file is not in the metadata.json
-                # For example, when processing a test set with users not in the training set.
-                # We can either skip or assign a default index. Skipping is safer.
-                # print(f"Warning: User '{u}' not found in metadata.json, skipping.")
+                # User from pk not present in metadata.json; skip
                 continue
-
             # sessions stored as dict session_id → [(loc, tim), ...]
             for sess_id, sess in udata['sessions'].items():
                 # prefix / target split
@@ -180,7 +188,8 @@ if __name__ == '__main__':
                     model, loc_seq, tim_seq, target_loc,
                     args.model_mode, uid_idx
                 )
-                line = f"{tid},{ppl:.3f}" # sess_id is always 0 when we have 1 traj per user
+                # Use the original label as tid in output
+                line = f"{label},{ppl:.3f}"
                 if out_f:
                     out_f.write(line + "\n")
                 else:

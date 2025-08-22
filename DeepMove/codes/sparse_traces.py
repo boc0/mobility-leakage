@@ -199,9 +199,20 @@ class DataFoursquare(object):
                 sessions_tran[sid] = [[self.vid_list[p[0]][0], self.tid_list_48(p[1])]
                                        for p in sessions[sid]]
             # split user's sessions into train and test
-            split_idx = int(np.floor(self.train_split * len(sessions_id)))
-            train_id = sessions_id[:split_idx]
-            test_id = sessions_id[split_idx:]
+            n_sessions = len(sessions_id)
+            if n_sessions == 1:
+                # single-session users: keep in train to avoid empty history in test
+                train_id = sessions_id
+                test_id = []
+            else:
+                split_idx = int(np.floor(self.train_split * n_sessions))
+                # guarantee at least one train and one test if possible
+                if split_idx == 0:
+                    split_idx = 1
+                if split_idx == n_sessions:
+                    split_idx = n_sessions - 1
+                train_id = sessions_id[:split_idx]
+                test_id = sessions_id[split_idx:]
             # compute lengths
             pred_len = sum(len(sessions_tran[i]) - 1 for i in train_id)
             valid_len = sum(len(sessions_tran[i]) - 1 for i in test_id) if test_id else 0
@@ -297,7 +308,7 @@ def process_directory(in_dir, out_dir, train_filename, train_split_ratio=0.8):
             metadata_json=metadata_path,
             secondary=is_secondary,
             trace_min=0, global_visit=0, hour_gap=200, min_gap=0,
-            session_max=10000, session_min=1, sessions_min=1,
+            session_max=48, session_min=1, sessions_min=1,
             train_split=current_train_split
         )
 

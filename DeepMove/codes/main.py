@@ -59,7 +59,7 @@ def run(args):
     elif parameters.model_mode == 'attn_local_long':
         model = TrajPreLocalAttnLong(parameters=parameters).to(device)
     if args.pretrain == 1:
-        model.load_state_dict(torch.load("../pretrain/" + args.model_mode + "/res.m"))
+        model.load_state_dict(torch.load(os.path.join("..", "pretrain", args.model_mode, "res.m")))
 
     if 'max' in parameters.model_mode:
         parameters.history_mode = 'max'
@@ -104,7 +104,7 @@ def run(args):
                                                        len([y for x in test_idx for y in test_idx[x]])))
     save_dir = args.save_dir
     tmp_path = 'checkpoint/'
-    os.makedirs(save_dir + tmp_path, exist_ok=True)
+    os.makedirs(os.path.join(save_dir, tmp_path), exist_ok=True)
     for epoch in range(parameters.epoch):
         st = time.time()
         if args.pretrain == 0:
@@ -122,7 +122,7 @@ def run(args):
         metrics['valid_acc'][epoch] = users_acc
 
         save_name_tmp = 'ep_' + str(epoch) + '.m'
-        torch.save(model.state_dict(), save_dir + tmp_path + save_name_tmp)
+        torch.save(model.state_dict(), os.path.join(save_dir, tmp_path, save_name_tmp))
 
         scheduler.step(avg_acc)
         lr_last = lr
@@ -130,7 +130,7 @@ def run(args):
         if lr_last > lr:
             load_epoch = np.argmax(metrics['accuracy'])
             load_name_tmp = 'ep_' + str(load_epoch) + '.m'
-            model.load_state_dict(torch.load(save_dir + tmp_path + load_name_tmp))
+            model.load_state_dict(torch.load(os.path.join(save_dir, tmp_path, load_name_tmp)))
             print('load epoch={} model state'.format(load_epoch))
         if epoch == 0:
             print('single epoch time cost:{}'.format(time.time() - st))
@@ -142,7 +142,7 @@ def run(args):
     mid = np.argmax(metrics['accuracy'])
     avg_acc = metrics['accuracy'][mid]
     load_name_tmp = 'ep_' + str(mid) + '.m'
-    model.load_state_dict(torch.load(save_dir + tmp_path + load_name_tmp))
+    model.load_state_dict(torch.load(os.path.join(save_dir, tmp_path, load_name_tmp)))
     save_name = 'res'
     json.dump({'args': argv, 'metrics': metrics}, fp=open(os.path.join(save_dir, save_name + '.rs'), 'w'), indent=4)
     metrics_view = {'train_loss': [], 'valid_loss': [], 'accuracy': []}
@@ -161,7 +161,7 @@ def run(args):
 
 
 def load_pretrained_model(config):
-    res = json.load(open("../pretrain/" + config.model_mode + "/res.txt"))
+    res = json.load(open(os.path.join("..", "pretrain", config.model_mode, "res.txt")))
     args = Settings(config, res["args"])
     return args
 
