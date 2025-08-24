@@ -84,6 +84,8 @@ if __name__ == '__main__':
                         help="optional output. For a single file, a CSV file path. For a directory, an output directory path.")
     parser.add_argument('--metadata_json', type=str, default=None,
                         help="path to metadata json file (required for correct model size)")
+    parser.add_argument('--merge_sessions', action='store_true',
+                        help="merge all sessions per user into one long sequence before scoring")
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -173,27 +175,42 @@ if __name__ == '__main__':
             if uid_idx is None:
                 # User from pk not present in metadata.json; skip
                 continue
-            # sessions stored as dict session_id → [(loc, tim), ...]
-            for sess_id, sess in udata['sessions'].items():
-                # prefix / target split
-                if len(sess) < 2:
+
+            if args.merge_sessions:
+                # Merge all sessions into one long sequence (chronological by session id)
+                sess_ids = sorted(udata['sessions'].keys())
+                merged = []
+                for sid in sess_ids:
+                    merged.extend(udata['sessions'][sid])
+                if len(merged) < 2:
                     continue
-                locs = [p[0] for p in sess]
-                tims = [p[1] for p in sess]
-                # predict from step 1…end
-                loc_seq    = locs[:-1]
-                tim_seq    = tims[:-1]
+                locs = [p[0] for p in merged]
+                tims = [p[1] for p in merged]
+                loc_seq = locs[:-1]
+                tim_seq = tims[:-1]
                 target_loc = locs[1:]
-                ppl = trajectory_perplexity(
-                    model, loc_seq, tim_seq, target_loc,
-                    args.model_mode, uid_idx
-                )
-                # Use the original label as tid in output
+                ppl = trajectory_perplexity(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx)
                 line = f"{label},{ppl:.3f}"
                 if out_f:
                     out_f.write(line + "\n")
                 else:
                     print(line)
+            else:
+                # Score each session separately (original behavior)
+                for sess_id, sess in udata['sessions'].items():
+                    if len(sess) < 2:
+                        continue
+                    locs = [p[0] for p in sess]
+                    tims = [p[1] for p in sess]
+                    loc_seq = locs[:-1]
+                    tim_seq = tims[:-1]
+                    target_loc = locs[1:]
+                    ppl = trajectory_perplexity(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx)
+                    line = f"{label},{ppl:.3f}"
+                    if out_f:
+                        out_f.write(line + "\n")
+                    else:
+                        print(line)
 
         # Close file if in directory mode
         if args.data_dir and out_f:
