@@ -64,10 +64,15 @@ class MarkovModel:
         model.max_state_probs.update(loaded_max_probs)
 
         # Rebuild the graph from the loaded transitions
+        vocab = set()
         for state, next_states in model.transitions.items():
+            for token in state:
+                vocab.add(token)
             for next_state, count in next_states.items():
                 graph_next_state = tuple(list(state)[1:] + [next_state])
                 model.graph.add_edge(state, graph_next_state, weight=count)
+                vocab.add(next_state)
+        model.vocab = vocab
         
         print(f"Model loaded from {filepath}")
         return model
@@ -92,19 +97,55 @@ class MarkovModel:
                 self.max_state_probs[state] = max_prob
 
     def move(self, state):
-        next_states = list(self.transitions[state].keys())
-        probabilities = [self.transitions[state][next_state] / sum(self.transitions[state].values()) for next_state in next_states]
-        next_state = random.choices(next_states, weights=probabilities)[0]
-        return next_state
+        """Sample the next symbol from a given state (context).
+        Returns None if the state has no outgoing transitions."""
+        next_counts = self.transitions.get(state, {})
+        if not next_counts:
+            return None
+        next_states = list(next_counts.keys())
+        weights = list(next_counts.values())
+        return random.choices(next_states, weights=weights, k=1)[0]
 
     def generate(self, length, state=0):
-        current_state = random.choice(list(self.states.keys())) if state==0 else state
+        """Generate a sequence of the given length.
+        - Seeds from a valid state (with outgoing transitions) if none/invalid provided.
+        - Re-seeds if a dead-end state is encountered during generation.
+        """
+        # Collect states with outgoing transitions
+        valid_states = [s for s, nxt in self.transitions.items() if len(nxt) > 0]
+        if not valid_states:
+            raise ValueError("No valid states with outgoing transitions. Train the model with more data.")
+
+        # Normalize provided seed
+        provided = None
+        if state != 0 and state is not None:
+            provided = tuple(state) if isinstance(state, (list, tuple)) else (state,)
+
+        if provided is None or not self.transitions.get(provided):
+            current_state = random.choice(valid_states)
+        else:
+            current_state = provided
+
         generated_sequence = list(current_state)
-        for _ in range(length - self.state_size):
-            next_word = self.move(current_state)
+        # Ensure sequence has at least state_size tokens
+        if len(generated_sequence) < self.state_size:
+            pad_state = random.choice(valid_states)
+            generated_sequence = list(pad_state)
+
+        while len(generated_sequence) < max(length, self.state_size + 1):
+            ctx = tuple(generated_sequence[-self.state_size:]) if self.state_size > 0 else tuple()
+            next_word = self.move(ctx)
+            if next_word is None:
+                # Dead end: reseed with another valid context
+                ctx = random.choice(valid_states)
+                # Append its tokens to keep momentum, then continue
+                generated_sequence.extend(list(ctx))
+                # Trim to avoid growing too fast
+                generated_sequence = generated_sequence[-(self.state_size + 1):]
+                continue
             generated_sequence.append(next_word)
-            current_state = tuple(generated_sequence[-self.state_size:])
-        return ' '.join(generated_sequence)
+
+        return ' '.join(generated_sequence[:length])
 
     def likelihood(self, sequence):
         words = sequence.split()
@@ -431,7 +472,7 @@ class MarkovModel:
         avg_log_likelihood = np.sum(log_likelihoods) / total_possible_transitions
 
         # Exponentiation to get a likelihood score between 0 and 1
-        return np.exp(avg_log_likelihood)
+        return -avg_log_likelihood
     
 
     def log_likelihood_emphasize_frequent(self, sequence, epsilon=1e-10):
