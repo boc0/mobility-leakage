@@ -26,10 +26,10 @@ def entropy_spatial(sessions):
 
 
 class DataFoursquare(object):
-    def __init__(self, trace_min=10, global_visit=10, hour_gap=72, min_gap=10, session_min=2, session_max=10,
-                 sessions_min=2, train_split=0.8, embedding_len=50):
+    def __init__(self, trace_min=0, global_visit=0, hour_gap=200, min_gap=0, session_min=1, session_max=10000,
+                 sessions_min=1, train_split=0.8, embedding_len=50):
         tmp_path = "data/"
-        self.TWITTER_PATH = tmp_path + 'foursquare/tweet_clean_all.txt'
+        self.TWITTER_PATH = tmp_path + 'foursquare/tweet_clean_small.txt'
         self.VENUES_PATH = tmp_path + 'foursquare/venues_all.txt'
         self.SAVE_PATH = tmp_path
         self.save_name = 'foursquare_cut_one_day'
@@ -47,7 +47,6 @@ class DataFoursquare(object):
 
         self.data = {}
         self.venues = {}
-        self.venues_cat = {}
         self.words_original = []
         self.words_lens = []
         self.dictionary = dict()
@@ -66,21 +65,19 @@ class DataFoursquare(object):
 
     # ############# 1. read trajectory data from twitters
     def load_trajectory_from_tweets(self):
+        import os
+        print(os.getcwd())
         with open(self.TWITTER_PATH,encoding='UTF-8') as fid:
             for i, line in enumerate(fid):
-                _, uid, _, _, tim, _, _, tweet, pid, cat_id = line.strip('\r\n').split('')
+                uid, _, _, tim, _, tweet, pid = line.strip('\r\n').split('')
                 if uid not in self.data:
-                    self.data[uid] = [[pid, tim, cat_id]]
+                    self.data[uid] = [[pid, tim]]
                 else:
-                    self.data[uid].append([pid, tim, cat_id])
+                    self.data[uid].append([pid, tim])
                 if pid not in self.venues:
                     self.venues[pid] = 1
                 else:
                     self.venues[pid] += 1
-                if cat_id not in self.venues_cat:
-                    self.venues_cat[cat_id] = 1
-                else:
-                    self.venues_cat[cat_id] += 1
 
     # ########### 3.0 basically filter users based on visit length and other statistics
     def filter_users_by_length(self):
@@ -100,7 +97,7 @@ class DataFoursquare(object):
             topk1 = [x[0] for x in topk if x[1] > 1]
             sessions = {}
             for i, record in enumerate(info):
-                poi, tmd, cat_id = record
+                poi, tmd = record
                 try:
                     current_date = tmd.split(' ')[0]
 
@@ -204,7 +201,7 @@ class DataFoursquare(object):
     def load_venues(self):
         with open(self.TWITTER_PATH, 'r',encoding='UTF-8') as fid:
             for line in fid:
-                _, uid, lon, lat, tim, _, _, tweet, pid, cid = line.strip('\r\n').split('')
+                uid, lon, lat, tim, _, _, pid = line.strip('\r\n').split('')
                 self.pid_loc_lat[pid] = [float(lon), float(lat)]
 
     def venues_lookup(self):
@@ -237,7 +234,7 @@ class DataFoursquare(object):
             sessions_tran = {}
             sessions_id = []
             for sid in sessions:
-                sessions_tran[sid] = [[self.vid_list[p[0]][0], p[1], p[-1]] for p in
+                sessions_tran[sid] = [[self.vid_list[p[0]][0], p[1]] for p in
                                       sessions[sid]]
                 sessions_id.append(sid)
             split_id = int(np.floor(self.train_split * len(sessions_id)))
@@ -308,17 +305,18 @@ class DataFoursquare(object):
                               'parameters': self.get_parameters(), 'data_filter': self.data_filter,
                               'vid_lookup': self.vid_lookup}
         pickle.dump(foursquare_dataset, open(self.SAVE_PATH + self.save_name + '.pk', 'wb'))
+        print('saved to ' + self.SAVE_PATH + self.save_name + '.pk')
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--trace_min', type=int, default=10, help="raw trace length filter threshold")
-    parser.add_argument('--global_visit', type=int, default=10, help="location global visit threshold")
-    parser.add_argument('--hour_gap', type=int, default=72, help="maximum interval of two trajectory points")
+    parser.add_argument('--trace_min', type=int, default=0, help="raw trace length filter threshold")
+    parser.add_argument('--global_visit', type=int, default=0, help="location global visit threshold")
+    parser.add_argument('--hour_gap', type=int, default=200, help="maximum interval of two trajectory points")
     parser.add_argument('--min_gap', type=int, default=0, help="minimum interval of two trajectory points")
-    parser.add_argument('--session_max', type=int, default=10, help="control the length of session not too long")
-    parser.add_argument('--session_min', type=int, default=3, help="control the length of session not too short")
-    parser.add_argument('--sessions_min', type=int, default=5, help="the minimum amount of the good user's sessions")
+    parser.add_argument('--session_max', type=int, default=10000, help="control the length of session not too long")
+    parser.add_argument('--session_min', type=int, default=1, help="control the length of session not too short")
+    parser.add_argument('--sessions_min', type=int, default=1, help="the minimum amount of the good user's sessions")
     parser.add_argument('--train_split', type=float, default=0.8, help="train/test ratio")
     return parser.parse_args()
 
