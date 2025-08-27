@@ -29,7 +29,7 @@ class DataFoursquare(object):
     def __init__(self, trace_min=0, global_visit=0, hour_gap=200, min_gap=0, session_min=1, session_max=10000,
                  sessions_min=1, train_split=0.8, embedding_len=50):
         tmp_path = "data/"
-        self.TWITTER_PATH = tmp_path + 'foursquare/tweet_clean_small.txt'
+        self.TWITTER_PATH = tmp_path + 'foursquare/tweet_clean_new.txt'
         self.VENUES_PATH = tmp_path + 'foursquare/venues_all.txt'
         self.SAVE_PATH = tmp_path
         self.save_name = 'foursquare_cut_one_day'
@@ -69,7 +69,7 @@ class DataFoursquare(object):
         print(os.getcwd())
         with open(self.TWITTER_PATH,encoding='UTF-8') as fid:
             for i, line in enumerate(fid):
-                uid, _, _, tim, _, tweet, pid = line.strip('\r\n').split('')
+                uid, _, _, tim, pid = line.strip('\r\n').split('')
                 if uid not in self.data:
                     self.data[uid] = [[pid, tim]]
                 else:
@@ -201,7 +201,7 @@ class DataFoursquare(object):
     def load_venues(self):
         with open(self.TWITTER_PATH, 'r',encoding='UTF-8') as fid:
             for line in fid:
-                uid, lon, lat, tim, _, _, pid = line.strip('\r\n').split('')
+                uid, lon, lat, tim, pid = line.strip('\r\n').split('')
                 self.pid_loc_lat[pid] = [float(lon), float(lat)]
 
     def venues_lookup(self):
