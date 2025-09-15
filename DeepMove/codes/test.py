@@ -1,112 +1,237 @@
-import argparse
 import os
+import math
+import argparse
 import pickle
 import json
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import numpy as np
 
-from train import RnnParameterData, run_simple, \
-    generate_input_history, generate_input_long_history, generate_input_long_history2
+from tqdm import tqdm
+
+from train import RnnParameterData
 from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Evaluate a pretrained DeepMove model on DeepMove .pk data (single file or directory)")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--data',      type=str,
-                        help="path to a processed .pk file")
-    group.add_argument('--data_dir',  type=str,
-                        help="path to a directory containing .pk files")
-    parser.add_argument('--model_path',   type=str, required=True,
-                        help="path to trained .m model checkpoint")
-    parser.add_argument('--model_mode',   type=str, required=True,
-                        choices=['simple','simple_long',
-                                 'attn_avg_long_user','attn_local_long'])
-    parser.add_argument('--metadata_json',type=str, required=True,
-                        help="path to metadata.json for loc/uid sizes")
-    args = parser.parse_args()
+from IPython import embed
 
-    # resolve a representative .pk to initialize parameter sizes
-    if args.data:
-        rep_pk = args.data
+# auto‐select MPS/CPU/CUDA
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
+def load_model(parameters, model_mode, ckpt_path):
+    if model_mode in ['simple', 'simple_long']:
+        model = TrajPreSimple(parameters)
+    elif model_mode == 'attn_avg_long_user':
+        model = TrajPreAttnAvgLongUser(parameters)
     else:
-        # pick the first .pk in the directory
-        pk_files = [os.path.join(args.data_dir, f) for f in sorted(os.listdir(args.data_dir)) if f.endswith('.pk')]
-        if not pk_files:
-            raise FileNotFoundError(f"No .pk files found in directory: {args.data_dir}")
-        rep_pk = pk_files[0]
+        model = TrajPreLocalAttnLong(parameters)
+    model.load_state_dict(torch.load(ckpt_path, map_location=device))
+    return model.to(device).eval()
 
-    # build parameter object (loads .pk internally for sizes)
-    parameters = RnnParameterData(data_path=rep_pk)
-    parameters.model_mode = args.model_mode
+def process_trajectory(model, loc_seq, tim_seq, target_seq, model_mode, uid, mode='topk', ks=[1,5,10]):
+    """
+    loc_seq, tim_seq: list of int prefix
+    target_seq: list of int next‐locations
+    """
+    locs = torch.LongTensor(loc_seq).unsqueeze(1).to(device)
+    tims = torch.LongTensor(tim_seq).unsqueeze(1).to(device)
+    tgt  = torch.LongTensor(target_seq).to(device)
 
-    # override sizes from metadata.json
-    meta = json.load(open(args.metadata_json, 'r'))
-    parameters.loc_size = len(meta['pid_mapping'])
-    parameters.uid_size = len(meta['users'])
+    with torch.no_grad():
+        if model_mode in ['simple', 'simple_long']:
+            scores = model(locs, tims)
+        elif model_mode == 'attn_avg_long_user':
+            # treat prefix as history too
+            history_loc   = locs
+            history_tim   = tims
+            history_count = [1] * history_loc.size(0)
+            uid_tensor    = torch.LongTensor([uid]).to(device)
+            target_len    = tgt.size(0)
+            scores = model(locs, tims,
+                           history_loc, history_tim,
+                           history_count, uid_tensor, target_len)
+        else:  # attn_local_long
+            target_len = tgt.size(0)
+            scores = model(locs, tims, target_len)
 
-    # set history_mode for non‐long models
-    if 'max' in args.model_mode:
-        parameters.history_mode = 'max'
-    elif 'avg' in args.model_mode:
-        parameters.history_mode = 'avg'
-    else:
-        parameters.history_mode = 'whole'
+        # align lengths
+        if scores.size(0) > tgt.size(0):
+            scores = scores[-tgt.size(0):]
+        
 
-    # instantiate & load model (once)
-    device = torch.device("mps") if torch.backends.mps.is_available() \
-             else torch.device("cuda") if torch.cuda.is_available() \
-             else torch.device("cpu")
-    if args.model_mode in ['simple','simple_long']:
-        model = TrajPreSimple(parameters).to(device)
-    elif args.model_mode == 'attn_avg_long_user':
-        model = TrajPreAttnAvgLongUser(parameters).to(device)
-    else:
-        model = TrajPreLocalAttnLong(parameters).to(device)
-    model.load_state_dict(torch.load(args.model_path, map_location=device))
+        if mode == 'topk':
+            # get top-k accuracy for each k in ks
+            topk = {}
+            for k in ks:
+                topk_k = 0
+                _, top_indices = scores.topk(k, dim=1)
+                for i in range(tgt.size(0)):
+                    if tgt[i] in top_indices[i]:
+                        topk_k += 1
+                topk[k] = topk_k / tgt.size(0)
+            return topk
+        
+        elif mode == 'rank':
+            # compute mean rank of true next locations
+            ranks = []
+            _, indices = scores.sort(dim=1, descending=True)
+            for i in range(tgt.size(0)):
+                rank = (indices[i] == tgt[i]).nonzero(as_tuple=True)[0].item() + 1
+                ranks.append(rank)
+            mean_rank = sum(ranks) / len(ranks)
+            return mean_rank
 
-    # define loss & optimizer (optimizer is unused in test mode)
-    criterion = nn.NLLLoss().to(device)
-    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
-                           lr=parameters.lr, weight_decay=parameters.L2)
-
-    def eval_one(pk_path: str):
-        ds = pickle.load(open(pk_path, 'rb'))
-        data_neural = ds['data_neural']
-        candidate = list(data_neural.keys())
-        if 'long' in args.model_mode:
-            if args.model_mode == 'simple_long':
-                data_test, test_idx = generate_input_long_history2(
-                    data_neural, 'test', candidate=candidate)
-            else:
-                data_test, test_idx = generate_input_long_history(
-                    data_neural, 'test', candidate=candidate)
-        else:
-            data_test, test_idx = generate_input_history(
-                data_neural, 'test', mode2=parameters.history_mode,
-                candidate=candidate)
-        avg_loss, avg_acc, _ = run_simple(
-            data_test, test_idx, 'test',
-            parameters.lr, parameters.clip,
-            model, optimizer, criterion,
-            parameters.model_mode
-        )
-        print(f"file: {pk_path}")
-        print(f"  Test Loss: {avg_loss:.4f}    Test Accuracy: {avg_acc:.4f}")
-
-    if args.data:
-        eval_one(args.data)
-    else:
-        pk_files = [os.path.join(args.data_dir, f) for f in sorted(os.listdir(args.data_dir)) if f.endswith('.pk')]
-        if not pk_files:
-            print(f"No .pk files found in {args.data_dir}")
-            return
-        for pk in pk_files:
-            eval_one(pk)
-
+        # sum negative log‐likelihood
+        loss_fn = nn.NLLLoss(reduction='sum')
+        nll = loss_fn(scores, tgt).item()
+    # perplexity = exp( avg nll per token )
+    # return math.exp(nll / len(target_seq))
+    return nll / len(target_seq)
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(
+        description="Test a pretrained DeepMove model."
+    )
+    parser.add_argument('--data_pk',     type=str, default=None,
+                        help="path to a single processed .pk file")
+    parser.add_argument('--data_dir',    type=str, default=None,
+                        help="path to a directory of processed .pk files")
+    parser.add_argument('--model_path',  type=str, required=True,
+                        help="checkpoint .m file to load")
+    parser.add_argument('--model_mode',  type=str, default='attn_avg_long_user',
+                        choices=['simple','simple_long','attn_avg_long_user','attn_local_long'])
+    parser.add_argument('--output',      type=str, default=None,
+                        help="optional output. For a single file, a CSV file path. For a directory, an output directory path.")
+    parser.add_argument('--metadata_json', type=str, default=None,
+                        help="path to metadata json file (required for correct model size)")
+    parser.add_argument('--merge_sessions', action='store_true',
+                        help="merge all sessions per user into one long sequence before scoring", default=True)
+    parser.add_argument('--no_merge', dest='merge_sessions', action='store_false',
+                        help="do not merge sessions; score each session separately")
+    parser.add_argument('--mode', choices=['topk', 'rank'], default='topk', help='Whether to get top-k accuracy (topk or rank)')
+    # add additional argument for mode topk to define the k values
+    parser.add_argument('--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy')
+    args = parser.parse_args()
+
+    if not args.data_pk and not args.data_dir:
+        parser.error('either --data_pk or --data_dir is required')
+    if args.data_pk and args.data_dir:
+        parser.error('cannot use both --data_pk and --data_dir')
+    if not args.metadata_json:
+        parser.error('--metadata_json is required')
+
+    # get file list
+    pk_files = []
+    if args.data_dir:
+        if not os.path.isdir(args.data_dir):
+            raise FileNotFoundError(f"Directory not found: {args.data_dir}")
+        pk_files = [os.path.join(args.data_dir, f) for f in os.listdir(args.data_dir) if f.endswith('.pk')]
+        if not pk_files:
+            print(f"Warning: No .pk files found in {args.data_dir}")
+    else:
+        if not os.path.exists(args.data_pk):
+            raise FileNotFoundError(f"File not found: {args.data_pk}")
+        pk_files.append(args.data_pk)
+
+    # build parameter object
+    params = RnnParameterData(metadata=args.metadata_json)
+    params.model_mode  = args.model_mode
+    params.use_cuda    = (device.type != 'cpu')
+    params.rnn_type    = getattr(params, 'rnn_type', 'LSTM')
+    params.attn_type   = getattr(params, 'attn_type', 'dot')
+    params.dropout_p   = getattr(params, 'dropout_p', 0.3)
+    params.tim_size    = getattr(params, 'tim_size', 48) # Use default, since it's not in metadata
+
+    # load metadata for sizes
+    meta = json.load(open(args.metadata_json, 'r'))
+    params.loc_size = len(meta.get('pid_mapping', {}))
+    params.uid_size = len(meta.get('users', []))
+    if params.loc_size == 0 or params.uid_size == 0:
+        raise ValueError("metadata.json is missing 'pid_mapping' or 'users' information.")
+    # build user label → index mapping
+    user_to_idx = {u: i for i, u in enumerate(meta.get('users', []))}
+
+    # load model once
+    model = load_model(params, args.model_mode, args.model_path)
+
+    # --- Output Handling ---
+    output_dir = None
+    if args.data_dir:
+        output_dir = args.output if args.output else 'likelihoods'
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Output for directory processing will be in: {output_dir}")
+
+    # --- Main Processing Loop ---
+    single_out_f = None
+    if args.data_pk and args.output:
+        os.makedirs(os.path.dirname(args.output), exist_ok=True)
+        single_out_f = open(args.output, 'w')
+        single_out_f.write("tid,perplexity\n")
+
+    for pk_file in pk_files:
+        print(f"Processing {pk_file}...")
+
+        # Determine current output file handle
+        out_f = None
+        if args.data_dir:
+            basename = os.path.basename(pk_file)
+            out_name = os.path.splitext(basename)[0] + '.csv'
+            out_path = os.path.join(output_dir, out_name)
+            out_f = open(out_path, 'w')
+            out_f.write("tid,perplexity\n")
+        else: # single file mode
+            out_f = single_out_f
+
+        data = pickle.load(open(pk_file, 'rb'))
+        sessions_all = data['data_neural']
+        uid_list = data['uid_list']  # mapping: original_label -> [embedded_idx]
+        # Build mapping: embedded_idx -> original_label
+        idx_to_user = {v[0]: k for k, v in uid_list.items()}
+
+        # Build metadata user->idx using string keys to avoid type mismatches
+        # (metadata users may be strings; uid_list keys may be ints)
+        # user_to_idx is already built above; rebuild with str keys for safety:
+        meta = json.load(open(args.metadata_json, 'r'))
+        user_to_idx = {str(u): i for i, u in enumerate(meta.get('users', []))}
+
+        for u_idx, udata in sessions_all.items():
+            # map embedded uid index -> original user label -> metadata uid index
+            label = idx_to_user.get(u_idx, None)
+            uid_idx = user_to_idx.get(str(label), None)
+            if uid_idx is None:
+                # User from pk not present in metadata.json; skip
+                continue
+
+            # Merge all sessions into one long sequence (chronological by session id)
+            sess_ids = sorted(udata['sessions'].keys())
+            merged = []
+            for sid in sess_ids:
+                merged.extend(udata['sessions'][sid])
+            if len(merged) < 2:
+                continue
+            locs = [p[0] for p in merged]
+            tims = [p[1] for p in merged]
+            loc_seq = locs[:-1]
+            tim_seq = tims[:-1]
+            target_loc = locs[1:]
+            ppl = process_trajectory(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx, mode=args.mode, ks=args.ks)
+            line = f"{label},{ppl}"
+            # line = f"{label},{ppl:.3f}"
+            # print(line)
+            if out_f:
+                out_f.write(line + "\n")
+            else:
+                print(line)
+
+
+        # Close file if in directory mode
+        if args.data_dir and out_f:
+            out_f.close()
+
+    # Close file if in single file mode
+    if single_out_f:
+        single_out_f.close()

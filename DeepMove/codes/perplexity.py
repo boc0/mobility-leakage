@@ -12,6 +12,8 @@ from tqdm import tqdm
 from train import RnnParameterData
 from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
+from IPython import embed
+
 # auto‐select MPS/CPU/CUDA
 if torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -63,7 +65,6 @@ def trajectory_perplexity(model, loc_seq, tim_seq, target_seq, model_mode, uid):
         # sum negative log‐likelihood
         loss_fn = nn.NLLLoss(reduction='sum')
         nll = loss_fn(scores, tgt).item()
-
     # perplexity = exp( avg nll per token )
     # return math.exp(nll / len(target_seq))
     return nll / len(target_seq)
@@ -85,7 +86,9 @@ if __name__ == '__main__':
     parser.add_argument('--metadata_json', type=str, default=None,
                         help="path to metadata json file (required for correct model size)")
     parser.add_argument('--merge_sessions', action='store_true',
-                        help="merge all sessions per user into one long sequence before scoring")
+                        help="merge all sessions per user into one long sequence before scoring", default=True)
+    parser.add_argument('--no_merge', dest='merge_sessions', action='store_false',
+                        help="do not merge sessions; score each session separately")
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -168,7 +171,7 @@ if __name__ == '__main__':
         meta = json.load(open(args.metadata_json, 'r'))
         user_to_idx = {str(u): i for i, u in enumerate(meta.get('users', []))}
 
-        for u_idx, udata in tqdm(sessions_all.items()):
+        for u_idx, udata in sessions_all.items():
             # map embedded uid index -> original user label -> metadata uid index
             label = idx_to_user.get(u_idx, None)
             uid_idx = user_to_idx.get(str(label), None)
@@ -191,6 +194,7 @@ if __name__ == '__main__':
                 target_loc = locs[1:]
                 ppl = trajectory_perplexity(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx)
                 line = f"{label},{ppl:.3f}"
+                # print(line)
                 if out_f:
                     out_f.write(line + "\n")
                 else:

@@ -268,7 +268,7 @@ class DataFoursquare(object):
         pickle.dump(foursquare_dataset, open(self.SAVE_PATH, 'wb'))
 
 
-def process_directory(in_dir, out_dir, train_filename, train_split_ratio=0.8):
+def process_directory(in_dir, out_dir, train_filename, train_split_ratio=0.8, metadata_json_path=None):
     """
     Processes all .txt files in a directory using a shared metadata.json,
     and outputs them as .pk files to the output directory.
@@ -276,9 +276,10 @@ def process_directory(in_dir, out_dir, train_filename, train_split_ratio=0.8):
     print(f"Processing all .txt files from directory: {in_dir}")
     os.makedirs(out_dir, exist_ok=True)
 
-    metadata_path = os.path.join(in_dir, 'metadata.json')
+    # Allow caller to provide an explicit metadata.json path (e.g., run top directory)
+    metadata_path = metadata_json_path if metadata_json_path else os.path.join(in_dir, 'metadata.json')
     if not os.path.exists(metadata_path):
-        raise FileNotFoundError(f"Required metadata.json not found in input directory: {in_dir}")
+        raise FileNotFoundError(f"Required metadata.json not found at: {metadata_path}")
 
     txt_files = [f for f in os.listdir(in_dir) if f.endswith('.txt')]
     if not txt_files:
@@ -352,6 +353,7 @@ def parse_args():
     parser_dir.add_argument('--out_dir', type=str, default='preprocessed_pk', help='Output directory for .pk files')
     parser_dir.add_argument('--train', type=str, required=True, help='The name of the training file within the input directory.')
     parser_dir.add_argument('--train_split', type=float, default=0.8, help="train/test ratio for the training file")
+    parser_dir.add_argument('--metadata_json', type=str, default=None, help='Explicit path to metadata.json (overrides default in in_dir)')
 
     return parser.parse_args()
 
@@ -381,4 +383,4 @@ if __name__ == '__main__':
         print('final users:{} final locations:{}'.format(
             len(data_generator.data_neural), len(data_generator.vid_list)))
     elif args.command == 'dir':
-        process_directory(args.in_dir, args.out_dir, args.train, args.train_split)
+        process_directory(args.in_dir, args.out_dir, args.train, args.train_split, metadata_json_path=args.metadata_json)
