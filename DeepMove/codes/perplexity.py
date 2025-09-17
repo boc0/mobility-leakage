@@ -12,7 +12,7 @@ from tqdm import tqdm
 from train import RnnParameterData
 from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
-from IPython import embed
+# from IPython import embed
 
 # auto‐select MPS/CPU/CUDA
 if torch.backends.mps.is_available():
@@ -89,6 +89,8 @@ if __name__ == '__main__':
                         help="merge all sessions per user into one long sequence before scoring", default=True)
     parser.add_argument('--no_merge', dest='merge_sessions', action='store_false',
                         help="do not merge sessions; score each session separately")
+    parser.add_argument('--verbose', action='store_true',
+                        help='Also print each result line to stdout even when writing to an output file')
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -194,10 +196,9 @@ if __name__ == '__main__':
                 target_loc = locs[1:]
                 ppl = trajectory_perplexity(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx)
                 line = f"{label},{ppl:.3f}"
-                # print(line)
                 if out_f:
                     out_f.write(line + "\n")
-                else:
+                if (not out_f) or args.verbose:
                     print(line)
             else:
                 # Score each session separately (original behavior)
@@ -213,7 +214,7 @@ if __name__ == '__main__':
                     line = f"{label},{ppl:.3f}"
                     if out_f:
                         out_f.write(line + "\n")
-                    else:
+                    if (not out_f) or args.verbose:
                         print(line)
 
         # Close file if in directory mode

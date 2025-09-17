@@ -12,7 +12,7 @@ from tqdm import tqdm
 from train import RnnParameterData
 from model import TrajPreSimple, TrajPreAttnAvgLongUser, TrajPreLocalAttnLong
 
-from IPython import embed
+# from IPython import embed
 
 # auto‐select MPS/CPU/CUDA
 if torch.backends.mps.is_available():
@@ -115,6 +115,8 @@ if __name__ == '__main__':
     parser.add_argument('--mode', choices=['topk', 'rank'], default='topk', help='Whether to get top-k accuracy (topk or rank)')
     # add additional argument for mode topk to define the k values
     parser.add_argument('--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Also print each result line to stdout even when writing to an output file')
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -221,10 +223,9 @@ if __name__ == '__main__':
             ppl = process_trajectory(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx, mode=args.mode, ks=args.ks)
             line = f"{label},{ppl}"
             # line = f"{label},{ppl:.3f}"
-            # print(line)
             if out_f:
                 out_f.write(line + "\n")
-            else:
+            if (not out_f) or args.verbose:
                 print(line)
 
 

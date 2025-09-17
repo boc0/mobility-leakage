@@ -1,5 +1,20 @@
 # Usage
 
+## Installation
+
+We recommend using a virtual environment. Create and activate one with
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+Then install requirements with
+
+```bash
+pip install -r DeepMove/requirements.txt
+```
+
 ## Data preprocessing
 
 Data files are sets of trajectories represented as one single series of points containing latitude ('lat'), longitude ('lon'), timestamp ('ts'). The individual trajectories are then identified using a fourth trajectory id ('tid') column, with each trajectory appearing in the dataset contiguously. All training and testing data should be in this format, with the entire training dataset in one file. Example file:
