@@ -32,7 +32,7 @@ def load_model(parameters, model_mode, ckpt_path):
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     return model.to(device).eval()
 
-def process_trajectory(model, loc_seq, tim_seq, target_seq, model_mode, uid, mode='topk', ks=[1,5,10]):
+def process_trajectory(model, loc_seq, tim_seq, target_seq, model_mode, uid, mode='topk', k_values=[1,5,10]):
     """
     loc_seq, tim_seq: list of int prefix
     target_seq: list of int next‐locations
@@ -63,9 +63,9 @@ def process_trajectory(model, loc_seq, tim_seq, target_seq, model_mode, uid, mod
             scores = scores[-tgt.size(0):]
 
         if mode == 'topk':
-            # get top-k accuracy for each k in ks
+            # get top-k accuracy for each k in k_values
             topk = {}
-            for k in ks:
+            for k in k_values:
                 topk_k = 0
                 _, top_indices = scores.topk(k, dim=1)
                 for i in range(tgt.size(0)):
@@ -168,7 +168,7 @@ if __name__ == '__main__':
         os.makedirs(os.path.dirname(args.output), exist_ok=True)
         single_out_f = open(args.output, 'w')
         if args.mode == 'topk':
-            header = "tid," + ",".join([f"top-{k}" for k in args.ks]) + "\n"
+            header = "tid," + ",".join([f"top-{k}" for k in args.k_values]) + "\n"
             single_out_f.write(header)
         else:
             single_out_f.write("tid,mean_rank\n")
@@ -184,7 +184,7 @@ if __name__ == '__main__':
             out_path = os.path.join(output_dir, out_name)
             out_f = open(out_path, 'w')
             if args.mode == 'topk':
-                header = "tid," + ",".join([f"top-{k}" for k in args.ks]) + "\n"
+                header = "tid," + ",".join([f"top-{k}" for k in args.k_values]) + "\n"
                 out_f.write(header)
             else:
                 out_f.write("tid,mean_rank\n")
@@ -223,7 +223,7 @@ if __name__ == '__main__':
             loc_seq = locs[:-1]
             tim_seq = tims[:-1]
             target_loc = locs[1:]
-            ppl = process_trajectory(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx, mode=args.mode, ks=args.ks)
+            ppl = process_trajectory(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx, mode=args.mode, k_values=args.k_values)
             line = f"{label},{ppl}"
             # line = f"{label},{ppl:.3f}"
             if out_f:

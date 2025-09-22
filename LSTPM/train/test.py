@@ -113,7 +113,7 @@ def main():
             os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
             single_out_f = open(args.output, 'w')
             if args.mode == 'topk':
-                single_out_f.write(",".join(["user"] + [f"top-{k}" for k in args.ks]) + "\n")
+                single_out_f.write(",".join(["user"] + [f"top-{k}" for k in args.k_values]) + "\n")
             else:
                 single_out_f.write("user,mean-rank\n")
 
@@ -175,7 +175,7 @@ def main():
             out_path = os.path.join(output_dir, f"{base}.csv")
             out_f = open(out_path, 'w')
             if args.mode == 'topk':
-                out_f.write(",".join(["user"] + [f"top-{k}" for k in args.ks]) + "\n")
+                out_f.write(",".join(["user"] + [f"top-{k}" for k in args.k_values]) + "\n")
             else:
                 out_f.write("user,mean-rank\n")
 
@@ -212,8 +212,8 @@ def main():
                 if len(all_ranks) == 0:
                     continue
                 if args.mode == 'topk':
-                    topk = {k: sum(1 for r in all_ranks if r < k) / len(all_ranks) for k in args.ks}
-                    line = f"{u_label}," + ",".join(str(topk[k]) for k in args.ks)
+                    topk = {k: sum(1 for r in all_ranks if r < k) / len(all_ranks) for k in args.k_values}
+                    line = f"{u_label}," + ",".join(str(topk[k]) for k in args.k_values)
                     if out_f:
                         out_f.write(line + "\n")
                     else:
