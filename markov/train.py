@@ -87,10 +87,13 @@ if __name__ == '__main__':
                         help='Path to processed DeepMove .pk file (from sparse_traces.py)')
     group.add_argument('--data_csv', dest='data_csv', type=str,
                         help='Path to raw CSV (tid, lat, lon, timestamp)')
-    parser.add_argument('--save_model', type=str, default='markov_model.json',
-                        help='Path to save trained Markov model JSON (default: markov_model.json)')
+    parser.add_argument('--save_dir', type=str, default='.',
+                        help='Directory to save trained Markov model JSON to (default: .)')
     parser.add_argument('--state_size', type=int, default=1,
                         help='Markov state size (order). 1 = first-order (default)')
+    parser.add_argument('--generate_sequence', '--generate', action='store_true', default=False,
+                        help='Generate a sample sequence from the trained model after loading (default: False)')
+
     args = parser.parse_args()
 
     # 1. Prepare the corpus from the chosen input
@@ -108,17 +111,18 @@ if __name__ == '__main__':
     print("Training complete.")
 
     # 4. Save the trained model
-    model_save_path = args.save_model
+    model_save_path = os.path.join(args.save_dir, 'model.json')
+    os.makedirs(args.save_dir, exist_ok=True)
     markov.save_json(model_save_path)
 
     # 5. Load the model from the file (sanity check)
     loaded_markov = MarkovModel.load_json(model_save_path)
 
     # Now the loaded model is ready to be used
-    if loaded_markov.states:
-        generated_sequence = loaded_markov.generate(length=max(4, args.state_size + 1))
+    if args.generate_sequence:
+        if not loaded_markov.states:
+            print("No states were learned, cannot generate a sequence.")
+        generated_sequence = loaded_markov.generate(length=max(144, args.state_size + 1))
         print(f"Generated sequence from loaded model: {generated_sequence}")
-        likelihood = loaded_markov.likelihood_with_smoothing(generated_sequence)
-        print(f"Smoothed likelihood of generated sequence: {likelihood:.6f}")
-    else:
-        print("No states were learned, cannot generate a sequence.")
+        ppl = loaded_markov.perplexity(generated_sequence)
+        print(f"Perplexity of generated sequence: {ppl:.6f}")

@@ -4,56 +4,98 @@ import pickle
 from model import MarkovModel
 import pandas as pd
 
-def compute_likelihoods_for_file(model, pk_file_path, output_csv_path, likelihood_func_name):
+
+
+def _parse_csv_sequences(csv_path):
+    """Parse a CSV file into (tid, sequence_str) pairs.
+    Uses a local lat,lon -> pid mapping consistent with the training CSV prep.
     """
-    Loads a .pk file, computes likelihoods for all its sequences using the specified
+    df = pd.read_csv(csv_path)
+    required_cols = {"tid", "lat", "lon", "timestamp"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV missing required columns: {sorted(missing)}")
+
+    # Build local pid mapping by unique lat,lon pairs
+    loc_df = df[["lat", "lon"]].drop_duplicates().reset_index(drop=True)
+    loc_df["pid"] = loc_df.index.astype(str)
+    df = df.merge(loc_df, on=["lat", "lon"], how="left")
+
+    # sort and group
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"]).sort_values(["tid", "timestamp"]).reset_index(drop=True)
+
+    sequences = []
+    for tid, g in df.groupby("tid", sort=True):
+        pids = g["pid"].astype(str).tolist()
+        if len(pids) > 1:
+            sequences.append((tid, " ".join(pids)))
+    return sequences
+
+def compute_likelihoods_for_file(model, file_path, output_csv_path, likelihood_func_name):
+    """
+    Loads a .pk or .csv file, computes likelihoods for all sequences using the specified
     function, and saves the results to a CSV file.
     """
-    print(f"Processing {pk_file_path}...")
-    try:
-        with open(pk_file_path, 'rb') as f:
-            data = pickle.load(f)
-    except FileNotFoundError:
-        print(f"  Error: Could not find file {pk_file_path}")
-        return
+    print(f"Processing {file_path}...")
 
     # Get the requested likelihood function from the model instance
     try:
-        likelihood_function = getattr(model, 'log_likelihood')
+        likelihood_function = getattr(model, likelihood_func_name)
     except AttributeError:
         print(f"  Error: Likelihood function '{likelihood_func_name}' not found in MarkovModel class.")
         return
 
-    data_neural = data.get('data_neural', {})
-    # Create a reverse map from internal user index back to original trajectory ID (tid)
-    user_map = {v[0]: k for k, v in data.get('uid_list', {}).items()}
-    
     results = []
-    for user_idx, udata in data_neural.items():
-        tid = user_map.get(user_idx, 'unknown_user')
-        for sess_id, sess in udata.get('sessions', {}).items():
-            # A sequence must be longer than the model's state size to have at least one transition
-            if len(sess) <= model.state_size:
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".pk":
+        try:
+            with open(file_path, 'rb') as f:
+                data = pickle.load(f)
+        except FileNotFoundError:
+            print(f"  Error: Could not find file {file_path}")
+            return
+        data_neural = data.get('data_neural', {})
+        user_map = {v[0]: k for k, v in data.get('uid_list', {}).items()}
+        for user_idx, udata in data_neural.items():
+            tid = user_map.get(user_idx, 'unknown_user')
+            for sess_id, sess in udata.get('sessions', {}).items():
+                if len(sess) <= model.state_size:
+                    continue
+                sequence_str = ' '.join([str(p[0]) for p in sess])
+                metric = likelihood_function(sequence_str)
+                row = {
+                    'tid': tid,
+                    'perplexity': metric,
+                }
+                results.append(row)
+                print(row)
+    elif ext == ".csv":
+        try:
+            pairs = _parse_csv_sequences(file_path)
+        except Exception as e:
+            print(f"  Error parsing CSV {file_path}: {e}")
+            return
+        for tid, sequence_str in pairs:
+            if len(sequence_str.split()) <= model.state_size:
                 continue
-            
-            sequence_str = ' '.join([str(p[0]) for p in sess])
-            
-            # Compute the likelihood using the chosen function
-            likelihood = likelihood_function(sequence_str)
-            
-            results.append({
+            metric = likelihood_function(sequence_str)
+            row = {
                 'tid': tid,
-                'session_id': sess_id,
-                'likelihood': likelihood,
-                'sequence': sequence_str
-            })
+                'perplexity': metric,
+            }
+            results.append(row)
+            print(row)
+    else:
+        print(f"  Skipping unsupported file type: {file_path}")
+        return
 
     if results:
         df = pd.DataFrame(results)
         df.to_csv(output_csv_path, index=False)
         print(f"  Saved {len(results)} likelihoods to {output_csv_path}")
     else:
-        print(f"  No valid sequences found in {pk_file_path}")
+        print(f"  No valid sequences found in {file_path}")
 
 
 def main():
@@ -66,13 +108,6 @@ def main():
                         help="Path to the directory containing processed .pk data files.")
     parser.add_argument('--output_dir', type=str, default='markov_likelihoods',
                         help="Directory to save the output .csv files.")
-    parser.add_argument('--likelihood_func', type=str, required=True,
-                        choices=[
-                            'likelihood', 'likelihood_with_smoothing', 'log_likelihood', 'geometric_mean_likelihood',
-                            'max_normalized_transition_likelihood', 'powered_max_norm_likelihood',
-                            'weighted_double_mean_likelihood', 'state_normalized_likelihood'
-                        ],
-                        help="The name of the likelihood function to use from the MarkovModel class.")
     
     args = parser.parse_args()
 
@@ -83,20 +118,18 @@ def main():
     # --- Prepare Directories ---
     os.makedirs(args.output_dir, exist_ok=True)
     
-    pk_files = [f for f in os.listdir(args.data_dir) if f.endswith('.pk')]
-    if not pk_files:
-        print(f"No .pk files found in directory: {args.data_dir}")
+    files = [f for f in os.listdir(args.data_dir) if f.lower().endswith(('.pk', '.csv'))]
+    if not files:
+        print(f"No .pk or .csv files found in directory: {args.data_dir}")
         return
 
     # --- Main Processing Loop ---
-    for pk_file in pk_files:
-        input_path = os.path.join(args.data_dir, pk_file)
-        output_filename = os.path.splitext(pk_file)[0] + f'_{args.likelihood_func}.csv'
+    for fname in files:
+        input_path = os.path.join(args.data_dir, fname)
+        output_filename = os.path.splitext(fname)[0] + '_perplexity.csv'
         output_path = os.path.join(args.output_dir, output_filename)
-        
-        compute_likelihoods_for_file(model, input_path, output_path, args.likelihood_func)
 
-    print("\nLikelihood computation complete.")
+        compute_likelihoods_for_file(model, input_path, output_path, 'perplexity')
 
 
 if __name__ == '__main__':

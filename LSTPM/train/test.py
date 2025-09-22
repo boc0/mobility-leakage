@@ -72,7 +72,7 @@ def main():
     parser.add_argument('--output', type=str, default=None, help='For single file: CSV path. For directory: output directory path.')
     parser.add_argument('--distance', type=str, default=None, help='Optional path to distance.pkl; falls back to file-local or building from vid_lookup')
     parser.add_argument('--mode', choices=['topk', 'rank'], default='topk', help='Whether to get top-k accuracy (topk) or mean rank (rank)')
-    parser.add_argument('--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy (when --mode topk)')
+    parser.add_argument('--k_values', '--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy (when --mode topk)')
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:

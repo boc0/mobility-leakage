@@ -5,8 +5,8 @@
 We recommend using a virtual environment. Create and activate one with
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv DeepMove/venv
+source DeepMove/venv/bin/activate
 ```
 
 Then install requirements with
@@ -66,10 +66,10 @@ This produces a model file in `run0/training/res.m` and checkpoints during train
 ### Accuracy
 
 ```bash
-python3 DeepMove/codes/test.py --metadata_json run0/metadata.json --model_mode <model_type> --model_path run0/training/res.m --data_dir run0/preprocessed/ --mode topk --ks 1 5 10 20 --output run0/test                   
+python3 DeepMove/codes/test.py --metadata_json run0/metadata.json --model_mode <model_type> --model_path run0/training/res.m --data_dir run0/preprocessed/ --mode topk --k_values 1 5 10 20 --output run0/test                   
 ```
 
-This produces a CSV file for each data file in `run0/test`, containing for each trajectory in that file the top-k accuracy across that trajectory for each of the selected k values (specified in `--ks`).
+This produces a CSV file for each data file in `run0/test`, containing for each trajectory in that file the top-k accuracy across that trajectory for each of the selected k values (specified in `--k_values`).
 The additional `--mode rank` produces instead one value per trajectory, the average rank of the true next location in the predicted ranking.
 
 

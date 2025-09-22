@@ -61,7 +61,6 @@ def process_trajectory(model, loc_seq, tim_seq, target_seq, model_mode, uid, mod
         # align lengths
         if scores.size(0) > tgt.size(0):
             scores = scores[-tgt.size(0):]
-        
 
         if mode == 'topk':
             # get top-k accuracy for each k in ks
@@ -85,12 +84,8 @@ def process_trajectory(model, loc_seq, tim_seq, target_seq, model_mode, uid, mod
             mean_rank = sum(ranks) / len(ranks)
             return mean_rank
 
-        # sum negative log‐likelihood
-        loss_fn = nn.NLLLoss(reduction='sum')
-        nll = loss_fn(scores, tgt).item()
-    # perplexity = exp( avg nll per token )
-    # return math.exp(nll / len(target_seq))
-    return nll / len(target_seq)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -114,7 +109,7 @@ if __name__ == '__main__':
                         help="do not merge sessions; score each session separately")
     parser.add_argument('--mode', choices=['topk', 'rank'], default='topk', help='Whether to get top-k accuracy (topk or rank)')
     # add additional argument for mode topk to define the k values
-    parser.add_argument('--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy')
+    parser.add_argument('--k_values', '--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy')
     parser.add_argument('--verbose', action='store_true',
                         help='Also print each result line to stdout even when writing to an output file')
     args = parser.parse_args()
@@ -172,7 +167,11 @@ if __name__ == '__main__':
     if args.data_pk and args.output:
         os.makedirs(os.path.dirname(args.output), exist_ok=True)
         single_out_f = open(args.output, 'w')
-        single_out_f.write("tid,perplexity\n")
+        if args.mode == 'topk':
+            header = "tid," + ",".join([f"top-{k}" for k in args.ks]) + "\n"
+            single_out_f.write(header)
+        else:
+            single_out_f.write("tid,mean_rank\n")
 
     for pk_file in pk_files:
         print(f"Processing {pk_file}...")
@@ -184,7 +183,11 @@ if __name__ == '__main__':
             out_name = os.path.splitext(basename)[0] + '.csv'
             out_path = os.path.join(output_dir, out_name)
             out_f = open(out_path, 'w')
-            out_f.write("tid,perplexity\n")
+            if args.mode == 'topk':
+                header = "tid," + ",".join([f"top-{k}" for k in args.ks]) + "\n"
+                out_f.write(header)
+            else:
+                out_f.write("tid,mean_rank\n")
         else: # single file mode
             out_f = single_out_f
 

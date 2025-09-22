@@ -179,6 +179,186 @@ class MarkovModel:
             prob = (transition_count + alpha) / (state_count + alpha * V)
             likelihood *= prob
         return likelihood
+
+    def perplexity(self, sequence, smoothing_alpha=1.0, eps=1e-12):
+        """
+        Return a list of per-step transition probabilities (or log-probs) for the sequence.
+        For tokens w0 w1 ... wT and state_size = k, this returns probabilities for
+        each transition: P(w_{i+k} | w_i ... w_{i+k-1}), i = 0 .. T-k-1.
+        If smoothing_alpha > 0, uses Laplace smoothing.
+        """
+        words = sequence.split()
+        logprobs = []
+        V = max(1, len(self.vocab))  # for smoothing
+        if len(words) <= self.state_size:
+            return logprobs  # nothing to compute
+        for i in range(len(words) - self.state_size):
+            state = tuple(words[i:i + self.state_size])
+            nxt = words[i + self.state_size]
+            state_count = self.states.get(state, 0)
+            trans_count = self.transitions.get(state, {}).get(nxt, 0)
+            # Apply smoothing
+            if smoothing_alpha > 0:
+                p = (trans_count + smoothing_alpha) / (state_count + smoothing_alpha * V)
+            else:
+                p = (trans_count / state_count) if state_count > 0 else 0.0
+            logprobs.append(np.log(p + eps))
+        nll = -sum(logprobs)
+        ppl = np.exp(nll / max(1, len(logprobs)))
+        return ppl
+
+    def step_distributions(self, sequence, alpha=1.0, log=False, backoff='unigram', order='vocab'):
+        """
+        Return a 2D array of shape [T, V] with P(next_token | state_t) for each time step t,
+        where T = len(sequence.split()) - state_size and V = |vocab|.
+        Also returns token_order (list of tokens corresponding to columns).
+        - alpha: Laplace smoothing.
+        - backoff: 'unigram' (global next-token counts) or 'uniform' for unseen states.
+        - order: 'vocab' (sorted tokens) or 'freq' (descending unigram frequency).
+        """
+        words = sequence.split()
+        V = len(self.vocab)
+        if V == 0 or len(words) <= self.state_size:
+            return np.zeros((0, 0), dtype=np.float64), []
+
+        # Choose a stable token order for columns
+        if order == 'freq':
+            uni = {}
+            for ns in self.transitions.values():
+                for tok, c in ns.items():
+                    uni[tok] = uni.get(tok, 0) + c
+            token_order = [t for t, _ in sorted(uni.items(), key=lambda x: (-x[1], x[0]))]
+            token_order += [t for t in sorted(self.vocab) if t not in token_order]
+        else:
+            token_order = sorted(self.vocab)
+        idx = {t: i for i, t in enumerate(token_order)}
+
+        # Precompute unigram backoff counts
+        if backoff == 'unigram':
+            back_counts = np.zeros(V, dtype=np.float64)
+            for ns in self.transitions.values():
+                for tok, c in ns.items():
+                    back_counts[idx[tok]] += c
+            back_total = back_counts.sum()
+        else:
+            back_counts = None
+            back_total = 0.0
+
+        T = len(words) - self.state_size
+        out = np.zeros((T, V), dtype=np.float64)
+
+        for t in range(T):
+            state = tuple(words[t:t + self.state_size])
+            if state in self.states and self.states[state] > 0:
+                denom = self.states[state] + alpha * V
+                row = np.full(V, alpha / denom, dtype=np.float64)  # unseen-next baseline
+                for tok, c in self.transitions[state].items():
+                    row[idx[tok]] = (c + alpha) / denom
+            else:
+                if backoff == 'unigram' and back_total > 0:
+                    denom = back_total + alpha * V
+                    row = (back_counts + alpha) / denom
+                else:
+                    row = np.full(V, 1.0 / V, dtype=np.float64)
+
+            out[t] = np.log(row + 1e-12) if log else row
+
+        return out, token_order
+
+    def predicted_ranks(self, sequence, alpha=1.0, backoff='unigram', order='vocab'):
+        """
+        Compute the rank (1 = best) of the ground-truth next token across the trajectory.
+        Uses step_distributions (probabilities, not logs). Returns a list of ranks.
+        """
+        # Get per-step distributions
+        result = self.step_distributions(sequence, alpha=alpha, log=False, backoff=backoff, order=order)
+        if not isinstance(result, tuple) or len(result) != 2:
+            return 0.0
+        probs, token_order = result
+        if probs.size == 0:
+            return 0.0
+        idx = {t: i for i, t in enumerate(token_order)}
+
+        words = sequence.split()
+        T = len(words) - self.state_size
+        if T <= 0:
+            return 0.0
+
+        ranks = []
+        for t in range(T):
+            true_next = words[t + self.state_size]
+            p_row = probs[t]
+            if true_next in idx:
+                p_true = p_row[idx[true_next]]
+                # rank = 1 + number of tokens with strictly greater probability
+                rank = 1 + int((p_row > p_true).sum())
+            else:
+                # unseen token treated as worst rank
+                rank = p_row.shape[0]
+            ranks.append(float(rank))
+        
+        return ranks
+
+
+    def mean_true_rank(self, sequence, alpha=1.0, backoff='unigram', order='vocab'):
+        ranks = self.predicted_ranks(sequence, alpha=alpha, backoff=backoff, order=order)
+        return float(np.mean(ranks)) if ranks else 0.0
+    
+    def topk_accuracy_single(self, sequence, k=10, alpha=1.0, backoff='unigram', order='vocab'):
+        ranks = self.predicted_ranks(sequence, alpha=alpha, backoff=backoff, order=order)
+        hits = sum(1 for r in ranks if r <= k)
+        return float(hits / len(ranks)) if len(ranks) > 0 else 0.0
+
+    def topk_accuracy(self, sequence, alpha=1.0, backoff='unigram', order='vocab', k_values=[1,5,10]):
+        accuracies = {}
+        for k in k_values:
+            acc = self.topk_accuracy_single(sequence, k=k, alpha=alpha, backoff=backoff, order=order)
+            accuracies[k] = acc
+        return accuracies
+
+    def topk_accuracy_single_fast(self, sequence, k=10, alpha=1.0, backoff='unigram', order='vocab'):
+        """
+        Compute top-k accuracy for a single trajectory: fraction of steps where
+        the ground-truth next token is among the model's top-k predictions.
+        Returns a single float in [0, 1].
+        """
+        # Get per-step distributions
+        result = self.step_distributions(sequence, alpha=alpha, log=False, backoff=backoff, order=order)
+        if not isinstance(result, tuple) or len(result) != 2:
+            return 0.0
+        probs, token_order = result
+        if probs.size == 0:
+            return 0.0
+        idx = {t: i for i, t in enumerate(token_order)}
+
+        words = sequence.split()
+        T = len(words) - self.state_size
+        if T <= 0:
+            return 0.0
+
+        hits = 0
+        total = 0
+        V = probs.shape[1]
+        kk = min(max(1, int(k)), V)
+        for t in range(T):
+            true_next = words[t + self.state_size]
+            p_row = probs[t]
+            if true_next not in idx:
+                total += 1
+                continue
+            true_idx = idx[true_next]
+            # Find top-k indices (descending). Use argpartition for efficiency.
+            if kk < V:
+                topk_idx = np.argpartition(-p_row, kk - 1)[:kk]
+                # ensure exact order not required for membership test
+            else:
+                topk_idx = np.arange(V)
+            if true_idx in topk_idx:
+                hits += 1
+            total += 1
+
+        return float(hits / total) if total > 0 else 0.0
+
     
     def geometric_mean_likelihood(self, sequence):
         words = sequence.split()
@@ -467,6 +647,7 @@ class MarkovModel:
                 transition_prob = epsilon  # Almost 0 but avoids log(0)
 
             log_likelihoods.append(np.log(transition_prob))
+            print(transition_prob)
 
         # Compute average log-likelihood
         avg_log_likelihood = np.sum(log_likelihoods) / total_possible_transitions

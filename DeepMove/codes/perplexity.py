@@ -65,8 +65,7 @@ def trajectory_perplexity(model, loc_seq, tim_seq, target_seq, model_mode, uid):
         # sum negative log‐likelihood
         loss_fn = nn.NLLLoss(reduction='sum')
         nll = loss_fn(scores, tgt).item()
-    # perplexity = exp( avg nll per token )
-    # return math.exp(nll / len(target_seq))
+
     return nll / len(target_seq)
 
 if __name__ == '__main__':

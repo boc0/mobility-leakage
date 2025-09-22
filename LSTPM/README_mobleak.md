@@ -7,14 +7,14 @@ This guide shows how to preprocess your trajectory CSVs into the pickle format u
 We recommend a virtual environment:
 
 ```bash
-python3 -m venv DeepMove/venv
-source DeepMove/venv/bin/activate
+python3 -m venv LSTPM/venv
+source LSTPM/venv/bin/activate
 ```
 
 Install requirements:
 
 ```bash
-pip install -r DeepMove/requirements.txt
+pip install -r LSTPM/requirements.txt
 ```
 
 ## Data preprocessing
@@ -75,12 +75,12 @@ You can test a single file or an entire directory of `.pk` files.
 
 - Single file:
 ```bash
-python3 LSTPM/train/test.py --data_pk run0/preprocessed/cluster_0.pk --model_m run0/training/res.m --distance run0/distance.pkl --mode topk --ks 1 5 10 --output run0/test/cluster_0.csv
+python3 LSTPM/train/test.py --data_pk run0/preprocessed/cluster_0.pk --model_m run0/training/res.m --distance run0/distance.pkl --mode topk --k_values 1 5 10 --output run0/test/cluster_0.csv
 ```
 
 - Directory:
 ```bash
-python3 LSTPM/train/test.py --data_dir run0/preprocessed --model_m run0/training/res.m --distance run0/distance.pkl --mode topk --ks 1 5 10 --output run0/test
+python3 LSTPM/train/test.py --data_dir run0/preprocessed --model_m run0/training/res.m --distance run0/distance.pkl --mode topk --k_values 1 5 10 --output run0/test
 ```
 
 ### Perplexity
