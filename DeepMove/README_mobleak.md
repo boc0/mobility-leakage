@@ -44,7 +44,7 @@ From the root directory of `mobleak_seq`, first preprocess your data directory i
 python3 DeepMove/codes/preprocess.py --in_dir path/to/your_trajs --training_set_name <training_set_name> --out_dir run0
 ```
 
-where `path/to/your_trajs` is the path to the folder containing your data files, and `<training_set_name>` is the name of the file you want to use as training data (without extension).
+where `path/to/your_trajs` is the path to the folder containing your data files, and `<training_set_name>` is the name of the file you want to use as training data (without extension). This will create a metadata file at `run0/metadata.json` which is needed to use the model in the next steps and preprocessed data files in `run0/preprocessed/`.
 
 ## Training
 
@@ -80,3 +80,5 @@ python3 DeepMove/codes/perplexity.py --metadata_json run0/metadata.json --model_
 ```
 
 where `<model_type>` is the same as before.
+
+Both `test.py` and `perplexity.py` can be run a single file too, by replacing the `--data_dir` argument with `--data_pk path/to/single/file.pk` and `--output` with a target path for the single output file.

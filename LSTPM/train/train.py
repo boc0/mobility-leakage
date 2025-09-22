@@ -3,6 +3,8 @@ import torch.nn.functional as F
 import pickle
 import numpy as np
 import torch
+import argparse
+import json
 from collections import defaultdict
 import gc
 import os
@@ -110,11 +112,11 @@ class Model(nn.Module):
         hh = (param.data for name, param in self.named_parameters() if 'weight_hh' in name)
         b = (param.data for name, param in self.named_parameters() if 'bias' in name)
         for t in ih:
-            nn.init.xavier_uniform(t)
+            nn.init.xavier_uniform_(t)
         for t in hh:
-            nn.init.orthogonal(t)
+            nn.init.orthogonal_(t)
         for t in b:
-            nn.init.constant(t, 0)
+            nn.init.constant_(t, 0)
 
     def forward(self, user_vectors, item_vectors, mask_batch_ix_non_local, session_id_batch, sequence_tim_batch, is_train, poi_distance_matrix, sequence_dilated_rnn_index_batch):
         batch_size = item_vectors.size()[0]
@@ -204,10 +206,13 @@ class Model(nn.Module):
                 list_for_sessions.append(hidden_sequence_for_current.unsqueeze(0))
                 list_for_avg_distance.append(distance_row_expicit_avg.unsqueeze(0))
             if len(list_for_sessions) == 0:
-                # No history; back off to zeros to keep shapes consistent
-                hist_len = 1
-                list_for_sessions = [torch.zeros(1, self.hidden_units, device=device)]
-                list_for_avg_distance = [torch.ones(len(current_session_timid), device=device).unsqueeze(0)]
+                # No history; pad zeros with correct shapes so bmm works
+                current_items = max(1, len(current_session_timid))
+                # sessions_represent should be (current_items, hist_len, H) after cat+transpose,
+                # so before those ops we use [1, current_items, H]
+                list_for_sessions = [torch.zeros(1, current_items, self.hidden_units, device=device)]
+                # avg_distance becomes (current_items,) per item; start with ones to avoid div-by-zero
+                list_for_avg_distance = [torch.ones(current_items, device=device).unsqueeze(0)]
             avg_distance = torch.cat(list_for_avg_distance, dim = 0).transpose(0,1)
             sessions_represent = torch.cat(list_for_sessions, dim=0).transpose(0,1) ##current_items * history_session_length * embedding_size
             current_session_represent = current_session_represent.unsqueeze(2) ### current_items * embedding_size * 1
@@ -428,11 +433,13 @@ def generate_detailed_batch_data(one_train_batch):
     return user_id_batch, session_id_batch, sequence_batch, sequences_lens_batch, sequences_tim_batch, sequences_dilated_input_batch
 
 
-def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None):
+def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_dir: str = None, checkpoint_dir: str = "checkpoint", final_model_name: str = "res.m"):
     candidate = data_neural.keys()
     data_train, train_idx = generate_input_history(data_neural, 'train', candidate=candidate)
     # checkpointing setup
-    tmp_path = 'checkpoint2'
+    if save_dir is None:
+        save_dir = os.getcwd()
+    tmp_path = os.path.join(save_dir, checkpoint_dir)
     os.makedirs(tmp_path, exist_ok=True)
     best_acc = -1.0
     best_epoch = -1
@@ -484,8 +491,9 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None):
         load_name_tmp = f'ep_{best_epoch}.m'
         best_path = os.path.join(tmp_path, load_name_tmp)
         network.load_state_dict(torch.load(best_path, map_location=device))
-        os.makedirs('final', exist_ok=True)
-        torch.save(network.state_dict(), 'final/res.m')
+        os.makedirs(save_dir, exist_ok=True)
+        final_path = os.path.join(save_dir, final_model_name)
+        torch.save(network.state_dict(), final_path)
         # optional cleanup of tmp checkpoints to mirror DeepMove behavior
         '''
         try:
@@ -531,6 +539,11 @@ def evaluate(network, batch_size = 2):
     network.train(False)
     candidate = data_neural.keys()
     data_test, test_idx = generate_input_long_history(data_neural, 'test', candidate=candidate)
+
+    # Fallback: if all test lists are empty, use the train split for evaluation
+    if all(len(v) == 0 for v in test_idx.values()):
+        data_test, test_idx = generate_input_long_history(data_neural, 'train', candidate=candidate)
+
     users_acc = {}
     with torch.no_grad():
         run_queue = generate_queue(test_idx, 'normal', 'test')
@@ -591,28 +604,77 @@ def geodistance(lng1,lat1,lng2,lat2):
     return distance
 
 
-if __name__ == '__main__':
+def cli_main():
+    parser = argparse.ArgumentParser(description="Train LSTPM model with dataset, metadata, and distance matrix")
+    parser.add_argument("--data_pk", required=True, help="Path to preprocessed dataset .pk file")
+    parser.add_argument("--metadata_json", required=False, help="Path to metadata.json (optional, for logging/consistency checks)")
+    parser.add_argument("--distance", required=True, help="Path to distance.pkl file matching the dataset vocabulary")
+    parser.add_argument("--save_dir", required=True, help="Directory to save checkpoints and final model")
+    parser.add_argument("--epochs", type=int, default=40, help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=32, help="Training batch size")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--weight_decay", type=float, default=1e-6, help="Weight decay (L2)")
+    args = parser.parse_args()
+
     np.random.seed(1)
     torch.manual_seed(1)
     print(f"Using device: {device}")
-    data = pickle.load(open('foursquare_cut_one_day.pkl', 'rb'), encoding='iso-8859-1')
+
+    # Load dataset
+    if not os.path.exists(args.data_pk):
+        raise FileNotFoundError(f"Dataset .pk not found at {args.data_pk}")
+    data = pickle.load(open(args.data_pk, 'rb'), encoding='iso-8859-1')
     vid_list = data['vid_list']
     uid_list = data['uid_list']
+    # wire globals used by generators/evaluate
+    global data_neural
     data_neural = data['data_neural']
-    poi_coordinate = data['vid_lookup']
-    loc_size = len(vid_list)
-    uid_size = len(uid_list)
+
+    # Metadata (optional consistency/info)
+    if args.metadata_json:
+        if not os.path.exists(args.metadata_json):
+            print(f"Warning: metadata file not found at {args.metadata_json}; continuing without it")
+        else:
+            try:
+                meta = json.load(open(args.metadata_json, 'r'))
+                print(f"Loaded metadata with {len(meta.get('pid_mapping', {}))} POIs and {len(meta.get('users', []))} users")
+            except Exception as e:
+                print(f"Warning: failed to parse metadata json: {e}")
+
+    # Time similarity matrix from data
     time_sim_matrix = calculate_time_sim(data_neural)
-    poi_distance_matrix = calculate_poi_distance(poi_coordinate)
-    poi_distance_matrix = pickle.load(open('distance.pkl', 'rb'), encoding='iso-8859-1')
+
+    # Distance matrix must be provided
+    if not os.path.exists(args.distance):
+        raise FileNotFoundError(f"distance.pkl not found at {args.distance}")
+    with open(args.distance, 'rb') as fh:
+        dist = pickle.load(fh, encoding='iso-8859-1')
+    # wire global used by model forward/evaluate
+    global poi_distance_matrix
+    poi_distance_matrix = np.asarray(dist, dtype=np.float32)
+    # check for zeros off the diagonal\
+
+    if np.any((poi_distance_matrix == 0) & ~np.eye(poi_distance_matrix.shape[0], dtype=bool)):
+        print("Warning: distance matrix has zero(s) off the diagonal; this may cause instability")
+        # replace them with small value to avoid div-by-zero
+        poi_distance_matrix[(poi_distance_matrix == 0) & ~np.eye(poi_distance_matrix.shape[0], dtype=bool)] = 1e-16
+        # also replace diagonal with small value
+        np.fill_diagonal(poi_distance_matrix, 1e-16)
+
     gc.collect()
-    n_users = uid_size
-    n_items = loc_size
-    session_id_sequences = None
-    user_id_session = None
-    network = Model(n_users=n_users, n_items=n_items, data_neural=data_neural, tim_sim_matrix=time_sim_matrix).to(
-        device)
-    opt = torch.optim.Adam(filter(lambda p: p.requires_grad, network.parameters()), lr=0.0001,
-                               weight_decay=1 * 1e-6)
+    n_users = len(uid_list)
+    n_items = len(vid_list)
+
+    # Build and train model
+    network = Model(n_users=n_users, n_items=n_items, data_neural=data_neural, tim_sim_matrix=time_sim_matrix).to(device)
+    global opt
+    opt = torch.optim.Adam(filter(lambda p: p.requires_grad, network.parameters()), lr=args.lr, weight_decay=args.weight_decay)
     criterion = nn.NLLLoss().to(device)
-    train_network(network,criterion=criterion)
+
+    os.makedirs(args.save_dir, exist_ok=True)
+    print(f"Training on users={n_users}, items={n_items}; saving to {args.save_dir}")
+    train_network(network, num_epoch=args.epochs, batch_size=args.batch_size, criterion=criterion, save_dir=args.save_dir, checkpoint_dir="checkpoint", final_model_name="res.m")
+
+
+if __name__ == '__main__':
+    cli_main()

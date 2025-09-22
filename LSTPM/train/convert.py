@@ -49,7 +49,7 @@ def convert_csv_to_deepmove_format(csv_path, out_txt_path, create_metadata=False
         }
         metadata_file = os.path.join(os.path.dirname(out_txt_path), 'metadata.json')
         with open(metadata_file, 'w') as jf:
-            json.dump(metadata, jf)
+            json.dump(metadata, jf, indent=2)
         print(f"Saved metadata to {metadata_file}")
         print(f"Found {len(pid_mapping)} locations and {len(users)} users.")
 
@@ -68,6 +68,10 @@ def convert_directory(in_dir, out_dir='preprocessed'):
 
     # 1. Read all CSVs to create a combined view for global mappings
     all_dfs = [pd.read_csv(os.path.join(in_dir, f)) for f in csv_files]
+    for df in all_dfs:
+        # round lat/lon to 6 decimal places to avoid floating point issues
+        df['lat'] = df['lat'].round(6)
+        df['lon'] = df['lon'].round(6)
     combined_df = pd.concat(all_dfs, ignore_index=True)
 
     # 2. Create one unified pid mapping for all locations
@@ -84,7 +88,7 @@ def convert_directory(in_dir, out_dir='preprocessed'):
     }
     metadata_file = os.path.join(out_dir, 'metadata.json')
     with open(metadata_file, 'w') as jf:
-        json.dump(metadata, jf)
+        json.dump(metadata, jf, indent=2)
     print(f"Saved unified metadata for {len(pid_mapping)} locations and {len(users)} users to {metadata_file}")
 
     # 4. Process and save each file individually using the unified mapping

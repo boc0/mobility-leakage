@@ -10,3 +10,4 @@ results
 LSTPM/train/data/*
 *.json
 *.zip
+results/*
