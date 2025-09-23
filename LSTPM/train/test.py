@@ -206,7 +206,7 @@ def main():
 
                     sorted_probs, sorted_indices = predictions_logp.unsqueeze(0).sort(dim=2, descending=True)
                     matches = sorted_indices == targets.unsqueeze(0).unsqueeze(-1)
-                    ranks = matches.argmax(dim=2)
+                    ranks = matches.to(torch.long).argmax(dim=2)
                     all_ranks.extend(ranks.squeeze(0).cpu().numpy().tolist())
 
                 if len(all_ranks) == 0:
