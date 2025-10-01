@@ -68,10 +68,16 @@ def convert_directory(in_dir, out_dir='preprocessed'):
 
     # 1. Read all CSVs to create a combined view for global mappings
     all_dfs = [pd.read_csv(os.path.join(in_dir, f)) for f in csv_files]
+    '''
     for df in all_dfs:
         # round lat/lon to 6 decimal places to avoid floating point issues
         df['lat'] = df['lat'].round(6)
         df['lon'] = df['lon'].round(6)
+    '''
+    for file, df in zip(csv_files, all_dfs):
+    if not all(col in df.columns for col in ['tid', 'lat', 'lon', 'timestamp']):
+        raise ValueError(f"CSV file {file} must contain 'tid', 'lat', 'lon', and "
+        f"'timestamp' columns, has instead: {df.columns.tolist()}")
     combined_df = pd.concat(all_dfs, ignore_index=True)
 
     # 2. Create one unified pid mapping for all locations
