@@ -145,7 +145,7 @@ if __name__ == '__main__':
 
     # load metadata for sizes
     meta = json.load(open(args.metadata_json, 'r'))
-    params.loc_size = len(meta.get('pid_mapping', {}))
+    params.loc_size = len(meta.get('pid_mapping', {})) + 1
     params.uid_size = len(meta.get('users', []))
     if params.loc_size == 0 or params.uid_size == 0:
         raise ValueError("metadata.json is missing 'pid_mapping' or 'users' information.")

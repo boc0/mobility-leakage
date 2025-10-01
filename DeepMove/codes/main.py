@@ -40,7 +40,7 @@ def run(args):
                                   model_mode=args.model_mode, data_path=args.data_path, save_dir=args.save_dir)
     # override sizes from metadata
     if meta:
-        parameters.loc_size = len(meta['pid_mapping'])
+        parameters.loc_size = len(meta['pid_mapping']) + 1
         parameters.uid_size = len(meta.get('users', []))
     argv = {'loc_emb_size': args.loc_emb_size, 'uid_emb_size': args.uid_emb_size, 'voc_emb_size': args.voc_emb_size,
             'tim_emb_size': args.tim_emb_size, 'hidden_size': args.hidden_size,
