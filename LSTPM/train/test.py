@@ -113,9 +113,9 @@ def main():
             os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
             single_out_f = open(args.output, 'w')
             if args.mode == 'topk':
-                single_out_f.write(",".join(["user"] + [f"top-{k}" for k in args.k_values]) + "\n")
+                single_out_f.write(",".join(["tid"] + [f"top-{k}" for k in args.k_values]) + "\n")
             else:
-                single_out_f.write("user,mean-rank\n")
+                single_out_f.write("tid,mean-rank\n")
 
     for pk in pk_files:
         print(f"Processing {pk}...")
@@ -172,12 +172,12 @@ def main():
         out_f = single_out_f
         if output_dir is not None:
             base = os.path.splitext(os.path.basename(pk))[0]
-            out_path = os.path.join(output_dir, f"{base}.csv")
+            out_path = os.path.join(output_dir, f"{base}_{args.mode}.csv")
             out_f = open(out_path, 'w')
             if args.mode == 'topk':
-                out_f.write(",".join(["user"] + [f"top-{k}" for k in args.k_values]) + "\n")
+                out_f.write(",".join(["tid"] + [f"top-{k}" for k in args.k_values]) + "\n")
             else:
-                out_f.write("user,mean-rank\n")
+                out_f.write("tid,mean-rank\n")
 
         with torch.no_grad():
             for u_idx in sorted(data_neural.keys()):
