@@ -433,7 +433,7 @@ def generate_detailed_batch_data(one_train_batch):
     return user_id_batch, session_id_batch, sequence_batch, sequences_lens_batch, sequences_tim_batch, sequences_dilated_input_batch
 
 
-def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_dir: str = None, checkpoint_dir: str = "checkpoint", final_model_name: str = "res.m"):
+def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_dir: str = None, checkpoint_dir: str = "checkpoint", final_model_name: str = "res.m", patience: int = 5):
     candidate = data_neural.keys()
     data_train, train_idx = generate_input_history(data_neural, 'train', candidate=candidate)
     # checkpointing setup
@@ -444,6 +444,10 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
     best_acc = -1.0
     best_epoch = -1
     metrics_accuracy = []
+    
+    # Early stopping variables
+    best_valid_loss = float('inf')
+    patience_counter = 0
     for epoch in range(num_epoch):
         network.train(True)
         i = 0
@@ -472,9 +476,15 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
             i += 1
         results = evaluate(network, 1)
         print("Scores: ", results)
+        
+        # Calculate validation loss for early stopping
+        valid_loss = evaluate_loss(network, 1)
+        print(f"Validation loss: {valid_loss:.4f}")
+        
         # Save checkpoint for this epoch
         save_name_tmp = f'ep_{epoch}.m'
         torch.save(network.state_dict(), os.path.join(tmp_path, save_name_tmp))
+        
         # Track best by top-1 accuracy (results[0])
         try:
             acc_at1 = float(results[0])
@@ -485,6 +495,19 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
             best_acc = acc_at1
             best_epoch = epoch
             print(f"New best @1={best_acc:.4f} at epoch {best_epoch}")
+        
+        # Early stopping check
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            patience_counter = 0
+            print(f'==>New best validation loss: {best_valid_loss:.4f}')
+        else:
+            patience_counter += 1
+            print(f'==>Validation loss did not improve. Patience: {patience_counter}/{patience}')
+
+        if patience_counter >= patience:
+            print(f'==>Early stopping triggered after {patience} epochs without improvement')
+            break
 
     # reload best and save final
     if best_epoch >= 0:
@@ -534,6 +557,42 @@ def get_acc(target, scores):
         else:
             break
     return acc.tolist(), ndcg.tolist()
+
+def evaluate_loss(network, batch_size=2):
+    """Calculate validation loss for early stopping"""
+    network.train(False)
+    candidate = data_neural.keys()
+    data_test, test_idx = generate_input_long_history(data_neural, 'test', candidate=candidate)
+
+    # Fallback: if all test lists are empty, use the train split for evaluation
+    if all(len(v) == 0 for v in test_idx.values()):
+        data_test, test_idx = generate_input_long_history(data_neural, 'train', candidate=candidate)
+
+    total_loss = 0.0
+    total_tokens = 0
+    with torch.no_grad():
+        run_queue = generate_queue(test_idx, 'normal', 'test')
+        for one_test_batch in minibatch(run_queue, batch_size=batch_size):
+            user_id_batch, session_id_batch, sequence_batch, sequences_lens_batch, sequence_tim_batch, sequence_dilated_rnn_index_batch = generate_detailed_batch_data(
+                one_test_batch)
+            max_len = max(sequences_lens_batch)
+            padded_sequence_batch, mask_batch_ix, mask_batch_ix_non_local = pad_batch_of_lists_masks(sequence_batch,
+                                                                                                     max_len)
+            padded_sequence_batch = torch.LongTensor(np.array(padded_sequence_batch)).to(device)
+            mask_batch_ix = torch.FloatTensor(np.array(mask_batch_ix)).to(device)
+            mask_batch_ix_non_local = torch.FloatTensor(np.array(mask_batch_ix_non_local)).to(device)
+            user_id_batch = torch.LongTensor(np.array(user_id_batch)).to(device)
+            logp_seq = network(user_id_batch, padded_sequence_batch, mask_batch_ix_non_local, session_id_batch, sequence_tim_batch, False, poi_distance_matrix, sequence_dilated_rnn_index_batch)
+            predictions_logp = logp_seq[:, :-1] * mask_batch_ix[:, :-1, None]
+            actual_next_tokens = padded_sequence_batch[:, 1:]
+            logp_next = torch.gather(predictions_logp, dim=2, index=actual_next_tokens[:, :, None])
+            loss = -logp_next.sum()
+            total_loss += loss.item()
+            total_tokens += mask_batch_ix[:, :-1].sum().item()
+    
+    if total_tokens == 0:
+        return float('inf')
+    return total_loss / total_tokens
 
 def evaluate(network, batch_size = 2):
     network.train(False)
@@ -611,6 +670,7 @@ def cli_main():
     parser.add_argument("--distance", required=True, help="Path to distance.pkl file matching the dataset vocabulary")
     parser.add_argument("--save_dir", required=True, help="Directory to save checkpoints and final model")
     parser.add_argument("--epochs", type=int, default=40, help="Number of training epochs")
+    parser.add_argument("--early_stopping", type=int, default=5, help="number of epochs to wait for validation loss improvement before early stopping")
     parser.add_argument("--batch_size", type=int, default=32, help="Training batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-6, help="Weight decay (L2)")
@@ -673,7 +733,7 @@ def cli_main():
 
     os.makedirs(args.save_dir, exist_ok=True)
     print(f"Training on users={n_users}, items={n_items}; saving to {args.save_dir}")
-    train_network(network, num_epoch=args.epochs, batch_size=args.batch_size, criterion=criterion, save_dir=args.save_dir, checkpoint_dir="checkpoint", final_model_name="res.m")
+    train_network(network, num_epoch=args.epochs, batch_size=args.batch_size, criterion=criterion, save_dir=args.save_dir, checkpoint_dir="checkpoint", final_model_name="res.m", patience=args.early_stopping)
 
 
 if __name__ == '__main__':
