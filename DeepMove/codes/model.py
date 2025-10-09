@@ -49,11 +49,11 @@ class TrajPreSimple(nn.Module):
         b = (param.data for name, param in self.named_parameters() if 'bias' in name)
 
         for t in ih:
-            nn.init.xavier_uniform(t)
+            nn.init.xavier_uniform_(t)
         for t in hh:
-            nn.init.orthogonal(t)
+            nn.init.orthogonal_(t)
         for t in b:
-            nn.init.constant(t, 0)
+            nn.init.constant_(t, 0)
 
     def forward(self, loc, tim):
         # initialize hidden states on correct device
@@ -74,7 +74,7 @@ class TrajPreSimple(nn.Module):
         out = self.dropout(out)
 
         y = self.fc(out)
-        score = F.log_softmax(y)  # calculate loss by NLLoss
+        score = F.log_softmax(y, dim=1)  # calculate loss by NLLoss
         return score
 
 
