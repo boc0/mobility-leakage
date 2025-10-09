@@ -87,6 +87,197 @@ def process_trajectory(model, loc_seq, tim_seq, target_seq, model_mode, uid, mod
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
+def pad_sequences(sequences, pad_value=0):
+    """Pad sequences to the same length for batching"""
+    if not sequences:
+        return torch.tensor([])
+    
+    max_len = max(len(seq) for seq in sequences)
+    padded = []
+    masks = []
+    
+    for seq in sequences:
+        pad_len = max_len - len(seq)
+        padded_seq = seq + [pad_value] * pad_len
+        mask = [1] * len(seq) + [0] * pad_len
+        padded.append(padded_seq)
+        masks.append(mask)
+    
+    return torch.LongTensor(padded), torch.BoolTensor(masks)
+
+def batch_process_trajectories(model, batch_data, model_mode, device, mode='topk', k_values=[1,5,10]):
+    """
+    Process a batch of trajectories
+    batch_data: list of (loc_seq, tim_seq, target_seq, uid_idx) tuples
+    """
+    if not batch_data:
+        return []
+    
+    # Separate the batch components
+    loc_seqs, tim_seqs, target_seqs, uid_indices = zip(*batch_data)
+    batch_size = len(batch_data)
+    max_k = max(k_values) if k_values else 1
+
+    def empty_result():
+        if mode == 'topk':
+            return {k: 0.0 for k in k_values}
+        return float('inf')
+
+    with torch.no_grad():
+        if model_mode in ['simple', 'simple_long']:
+            padded_locs, loc_masks = pad_sequences(loc_seqs)
+            padded_tims, _ = pad_sequences(tim_seqs)
+            padded_targets, target_masks = pad_sequences(target_seqs)
+
+            padded_locs = padded_locs.unsqueeze(2).to(device)
+            padded_tims = padded_tims.unsqueeze(2).to(device)
+            padded_targets = padded_targets.to(device)
+            target_masks = target_masks.to(device)
+
+            loc_batch = padded_locs.transpose(0, 1).squeeze(-1).contiguous()
+            tim_batch = padded_tims.transpose(0, 1).squeeze(-1).contiguous()
+            scores = model(loc_batch, tim_batch)
+            if scores.dim() == 2:
+                scores = scores.unsqueeze(1)
+            scores = scores.transpose(0, 1).contiguous()
+
+            results = []
+            for i in range(batch_size):
+                target_len = target_masks[i].sum().item()
+                if target_len == 0:
+                    results.append(empty_result())
+                    continue
+
+                seq_scores = scores[i][:target_len]
+                seq_targets = padded_targets[i][:target_len]
+
+                if mode == 'topk':
+                    metrics = {}
+                    top_indices = seq_scores.topk(max_k, dim=1).indices
+                    target_exp = seq_targets.unsqueeze(1)
+                    for k in k_values:
+                        hits = (top_indices[:, :k] == target_exp).any(dim=1).float()
+                        metrics[k] = hits.mean().item()
+                    results.append(metrics)
+                else:
+                    sorted_idx = seq_scores.argsort(dim=1, descending=True)
+                    matches = (sorted_idx == seq_targets.unsqueeze(1))
+                    ranks = matches.float().argmax(dim=1).float() + 1.0
+                    results.append(ranks.mean().item())
+
+            return results
+
+        results = [empty_result() for _ in range(batch_size)]
+
+        if model_mode == 'attn_avg_long_user':
+            groups = {}
+            for idx, targets in enumerate(target_seqs):
+                tgt_len = len(targets)
+                if tgt_len == 0:
+                    continue
+                groups.setdefault(tgt_len, []).append(idx)
+
+            for tgt_len, indices in groups.items():
+                seq_max = max(len(loc_seqs[i]) for i in indices)
+                group_size = len(indices)
+
+                loc_batch = torch.zeros(seq_max, group_size, dtype=torch.long, device=device)
+                tim_batch = torch.zeros(seq_max, group_size, dtype=torch.long, device=device)
+                history_counts = []
+
+                for col, data_idx in enumerate(indices):
+                    loc_seq = torch.tensor(loc_seqs[data_idx], dtype=torch.long, device=device)
+                    tim_seq = torch.tensor(tim_seqs[data_idx], dtype=torch.long, device=device)
+                    length = loc_seq.size(0)
+                    loc_batch[:length, col] = loc_seq
+                    tim_batch[:length, col] = tim_seq
+                    history_counts.append([1] * length)
+
+                uid_tensor = torch.tensor([uid_indices[i] for i in indices], dtype=torch.long, device=device)
+                target_lengths = [len(target_seqs[i]) for i in indices]
+
+                scores = model(
+                    loc_batch,
+                    tim_batch,
+                    loc_batch,
+                    tim_batch,
+                    history_counts,
+                    uid_tensor,
+                    target_lengths,
+                )
+
+                if scores.dim() == 2:
+                    scores = scores.unsqueeze(1)
+                scores = scores.transpose(0, 1).contiguous()
+
+                for col, data_idx in enumerate(indices):
+                    targets = torch.tensor(target_seqs[data_idx], dtype=torch.long, device=device)
+                    seq_scores = scores[col][-targets.size(0):]
+
+                    if mode == 'topk':
+                        metrics = {}
+                        top_indices = seq_scores.topk(max_k, dim=1).indices
+                        target_exp = targets.unsqueeze(1)
+                        for k in k_values:
+                            hits = (top_indices[:, :k] == target_exp).any(dim=1).float()
+                            metrics[k] = hits.mean().item()
+                        results[data_idx] = metrics
+                    else:
+                        sorted_idx = seq_scores.argsort(dim=1, descending=True)
+                        matches = (sorted_idx == targets.unsqueeze(1))
+                        ranks = matches.float().argmax(dim=1).float() + 1.0
+                        results[data_idx] = ranks.mean().item()
+
+            return results
+
+        # attn_local_long
+        groups = {}
+        for idx, targets in enumerate(target_seqs):
+            tgt_len = len(targets)
+            if tgt_len == 0:
+                continue
+            groups.setdefault(tgt_len, []).append(idx)
+
+        for tgt_len, indices in groups.items():
+            seq_max = max(len(loc_seqs[i]) for i in indices)
+            group_size = len(indices)
+
+            loc_batch = torch.zeros(seq_max, group_size, dtype=torch.long, device=device)
+            tim_batch = torch.zeros(seq_max, group_size, dtype=torch.long, device=device)
+
+            for col, data_idx in enumerate(indices):
+                loc_seq = torch.tensor(loc_seqs[data_idx], dtype=torch.long, device=device)
+                tim_seq = torch.tensor(tim_seqs[data_idx], dtype=torch.long, device=device)
+                length = loc_seq.size(0)
+                loc_batch[:length, col] = loc_seq
+                tim_batch[:length, col] = tim_seq
+
+            scores = model(loc_batch, tim_batch, tgt_len)
+
+            if scores.dim() == 2:
+                scores = scores.unsqueeze(1)
+            scores = scores.transpose(0, 1).contiguous()
+
+            for col, data_idx in enumerate(indices):
+                targets = torch.tensor(target_seqs[data_idx], dtype=torch.long, device=device)
+                seq_scores = scores[col][-targets.size(0):]
+
+                if mode == 'topk':
+                    metrics = {}
+                    top_indices = seq_scores.topk(max_k, dim=1).indices
+                    target_exp = targets.unsqueeze(1)
+                    for k in k_values:
+                        hits = (top_indices[:, :k] == target_exp).any(dim=1).float()
+                        metrics[k] = hits.mean().item()
+                    results[data_idx] = metrics
+                else:
+                    sorted_idx = seq_scores.argsort(dim=1, descending=True)
+                    matches = (sorted_idx == targets.unsqueeze(1))
+                    ranks = matches.float().argmax(dim=1).float() + 1.0
+                    results[data_idx] = ranks.mean().item()
+
+        return results
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Test a pretrained DeepMove model."
@@ -110,8 +301,10 @@ if __name__ == '__main__':
     parser.add_argument('--mode', choices=['topk', 'rank'], default='topk', help='Whether to get top-k accuracy (topk or rank)')
     # add additional argument for mode topk to define the k values
     parser.add_argument('--k_values', '--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy')
-    parser.add_argument('--verbose', action='store_true',
+    parser.add_argument('--verbose', action='store_true', default=False,
                         help='Also print each result line to stdout even when writing to an output file')
+    parser.add_argument('--batch_size', type=int, default=32,
+                        help='Batch size for parallel processing of trajectories')
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -203,6 +396,10 @@ if __name__ == '__main__':
         meta = json.load(open(args.metadata_json, 'r'))
         user_to_idx = {str(u): i for i, u in enumerate(meta.get('users', []))}
 
+        # Collect all trajectories for batch processing
+        trajectories_batch = []
+        labels_batch = []
+        
         for u_idx, udata in sessions_all.items():
             # map embedded uid index -> original user label -> metadata uid index
             label = idx_to_user.get(u_idx, None)
@@ -220,16 +417,35 @@ if __name__ == '__main__':
                 continue
             locs = [p[0] for p in merged]
             tims = [p[1] for p in merged]
-            loc_seq = locs[:-1]
-            tim_seq = tims[:-1]
+            if args.model_mode == 'attn_local_long':
+                loc_seq = locs
+                tim_seq = tims
+            else:
+                loc_seq = locs[:-1]
+                tim_seq = tims[:-1]
             target_loc = locs[1:]
-            ppl = process_trajectory(model, loc_seq, tim_seq, target_loc, args.model_mode, uid_idx, mode=args.mode, k_values=args.k_values)
-            line = f"{label},{ppl}"
-            # line = f"{label},{ppl:.3f}"
-            if out_f:
-                out_f.write(line + "\n")
-            if (not out_f) or args.verbose:
-                print(line)
+            trajectories_batch.append((loc_seq, tim_seq, target_loc, uid_idx))
+            labels_batch.append(label)
+        
+        # Process trajectories in batches
+        for i in range(0, len(trajectories_batch), args.batch_size):
+            batch = trajectories_batch[i:i+args.batch_size]
+            batch_labels = labels_batch[i:i+args.batch_size]
+            
+            results = batch_process_trajectories(model, batch, args.model_mode, device, 
+                                               mode=args.mode, k_values=args.k_values)
+            
+            for label, result in zip(batch_labels, results):
+                if args.mode == 'topk':
+                    values = [str(result[k]) for k in args.k_values]
+                    line = f"{label}," + ",".join(values)
+                else:
+                    line = f"{label},{result}"
+                
+                if out_f:
+                    out_f.write(line + "\n")
+                if (not out_f) or args.verbose:
+                    print(line)
 
 
         # Close file if in directory mode
