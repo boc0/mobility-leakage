@@ -77,6 +77,11 @@ def run(args):
     lr = parameters.lr
     metrics = {'train_loss': [], 'valid_loss': [], 'accuracy': [], 'valid_acc': {}}
 
+    # Early stopping variables
+    best_valid_loss = float('inf')
+    patience_counter = 0
+    patience = args.early_stopping
+
     candidate = list(parameters.data_neural.keys())
     # avg_acc_markov, users_acc_markov = markov(parameters, candidate)
     # metrics['markov_acc'] = users_acc_markov
@@ -123,6 +128,19 @@ def run(args):
 
         save_name_tmp = 'ep_' + str(epoch) + '.m'
         torch.save(model.state_dict(), os.path.join(save_dir, tmp_path, save_name_tmp))
+
+        # Early stopping check
+        if avg_loss < best_valid_loss:
+            best_valid_loss = avg_loss
+            patience_counter = 0
+            print('==>New best validation loss: {:.4f}'.format(best_valid_loss))
+        else:
+            patience_counter += 1
+            print('==>Validation loss did not improve. Patience: {}/{}'.format(patience_counter, patience))
+            
+        if patience_counter >= patience:
+            print('==>Early stopping triggered after {} epochs without improvement'.format(patience))
+            break
 
         scheduler.step(avg_acc)
         lr_last = lr
@@ -210,6 +228,7 @@ if __name__ == '__main__':
     parser.add_argument('--L2', type=float, default=1 * 1e-5, help=" weight decay (L2 penalty)")
     parser.add_argument('--clip', type=float, default=5.0)
     parser.add_argument('--epoch_max', type=int, default=20)
+    parser.add_argument('--early_stopping', type=int, default=5, help="number of epochs to wait for validation loss improvement before early stopping")
     parser.add_argument('--history_mode', type=str, default='avg', choices=['max', 'avg', 'whole'])
     parser.add_argument('--rnn_type', type=str, default='LSTM', choices=['LSTM', 'GRU', 'RNN'])
     parser.add_argument('--attn_type', type=str, default='dot', choices=['general', 'concat', 'dot'])

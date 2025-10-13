@@ -106,9 +106,9 @@ def main():
             os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
             single_out_f = open(args.output, 'w')
             if args.merge_sessions:
-                single_out_f.write("user,perplexity\n")
+                single_out_f.write("tid,perplexity\n")
             else:
-                single_out_f.write("user,session,perplexity\n")
+                single_out_f.write("tid,session,perplexity\n")
 
     # Load checkpoint once
     state = torch.load(args.model_m, map_location=device)
@@ -178,12 +178,12 @@ def main():
         out_f = single_out_f
         if output_dir is not None:
             base = os.path.splitext(os.path.basename(pk))[0]
-            out_path = os.path.join(output_dir, f"{base}.csv")
+            out_path = os.path.join(output_dir, f"{base}_perplexity.csv")
             out_f = open(out_path, 'w')
             if args.merge_sessions:
-                out_f.write("user,perplexity\n")
+                out_f.write("tid,perplexity\n")
             else:
-                out_f.write("user,session,perplexity\n")
+                out_f.write("tid,session,perplexity\n")
 
         with torch.no_grad():
             for u_idx in sorted(data_neural.keys()):
