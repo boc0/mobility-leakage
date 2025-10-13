@@ -75,9 +75,9 @@ def convert_directory(in_dir, out_dir='preprocessed'):
         df['lon'] = df['lon'].round(6)
     '''
     for file, df in zip(csv_files, all_dfs):
-    if not all(col in df.columns for col in ['tid', 'lat', 'lon', 'timestamp']):
-        raise ValueError(f"CSV file {file} must contain 'tid', 'lat', 'lon', and "
-        f"'timestamp' columns, has instead: {df.columns.tolist()}")
+        if not all(col in df.columns for col in ['tid', 'lat', 'lon', 'timestamp']):
+            raise ValueError(f"CSV file {file} must contain 'tid', 'lat', 'lon', and "
+            f"'timestamp' columns, has instead: {df.columns.tolist()}")
     combined_df = pd.concat(all_dfs, ignore_index=True)
 
     # 2. Create one unified pid mapping for all locations

@@ -62,7 +62,7 @@ run0/
 ## Training
 
 ```bash
-python3 LSTPM/train/train.py --data_pk run0/preprocessed/training_set.pk --metadata_json run0/metadata.json --distance run0/distance.pkl --save_dir run0/training --batch_size 512
+python3 LSTPM/train/train.py --data_pk run0/preprocessed/training_set.pk --metadata_json run0/metadata.json --distance run0/distance.pkl --save_dir run0/training --batch_size 512 --epochs 40
 ```
 
 This produces a model file in `run0/training/res.m` and checkpoints during training in `run0/training/checkpoint/`.

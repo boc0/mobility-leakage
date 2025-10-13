@@ -116,7 +116,15 @@ def main():
     n_users_ckpt = state.get('user_emb.weight', torch.empty(1, 1)).shape[0] if 'user_emb.weight' in state else None
 
     for pk in pk_files:
+        base = os.path.splitext(os.path.basename(pk))[0]
+        out_path = os.path.join(output_dir, f"{base}.csv") if output_dir else args.output
+
+        if output_dir and os.path.exists(out_path):
+            print(f"Skipping {pk}, output already exists at {out_path}")
+            continue
+
         print(f"Processing {pk}...")
+        #print(f"Processing {pk}...")
 
         vid_list, uid_list, data_neural, poi_coordinate = load_data(pk)
         n_items = len(vid_list)
