@@ -373,7 +373,7 @@ if __name__ == '__main__':
         out_f = None
         if args.data_dir:
             basename = os.path.basename(pk_file)
-            out_name = os.path.splitext(basename)[0] + '.csv'
+            out_name = os.path.splitext(basename)[0] + f'_{args.mode}.csv'
             out_path = os.path.join(output_dir, out_name)
             out_f = open(out_path, 'w')
             if args.mode == 'topk':
