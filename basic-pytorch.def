@@ -1,0 +1,14 @@
+Bootstrap: docker
+From: python:3.12
+
+%files
+    $PWD/requirements.txt requirements.txt
+
+%post
+    # Install Python packages
+    pip install --root-user-action=ignore -r requirements.txt
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export LANG=C.UTF-8
+    export LC_ALL=C.UTF-8
