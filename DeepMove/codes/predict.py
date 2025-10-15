@@ -48,7 +48,31 @@ def pad_sequences(sequences: List[List[int]], pad_value: int = 0):
     return padded, mask
 
 
-def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, steps: int, device):
+def next_time_slot(tim_seq: List[int], tim_size: int) -> int:
+    """Predict the next temporal slot given history.
+
+    Uses the most recent step size when available, otherwise defaults to a
+    single-slot increment, and wraps around the configured temporal vocabulary.
+    """
+    if tim_size <= 0:
+        return tim_seq[-1] if tim_seq else 0
+
+    if not tim_seq:
+        return 0
+
+    last = int(tim_seq[-1])
+    if len(tim_seq) >= 2:
+        prev = int(tim_seq[-2])
+        delta = (last - prev) % tim_size
+        if delta == 0:
+            delta = 1
+    else:
+        delta = 1
+
+    return (last + delta) % tim_size
+
+
+def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, steps: int, tim_size: int, device):
     if steps <= 0 or not batch_data:
         return [[] for _ in batch_data]
 
@@ -61,7 +85,6 @@ def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, step
     if model_mode in ['simple', 'simple_long']:
         for _ in range(steps):
             lengths = [len(seq) for seq in loc_seqs]
-            max_len = max(lengths)
 
             loc_tensor, _ = pad_sequences(loc_seqs, pad_value=0)
             tim_tensor, _ = pad_sequences(tim_seqs, pad_value=0)
@@ -83,8 +106,8 @@ def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, step
                 pred = int(pred_ids[i].item())
                 predictions[i].append(pred)
                 loc_seqs[i].append(pred)
-                last_time = tim_seqs[i][-1] if tim_seqs[i] else 0
-                tim_seqs[i].append(last_time)
+                next_tim = next_time_slot(tim_seqs[i], tim_size)
+                tim_seqs[i].append(next_tim)
         return predictions
 
     if model_mode == 'attn_avg_long_user':
@@ -92,7 +115,6 @@ def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, step
 
         for _ in range(steps):
             lengths = [len(seq) for seq in loc_seqs]
-            max_len = max(lengths)
 
             loc_tensor, _ = pad_sequences(loc_seqs, pad_value=0)
             tim_tensor, _ = pad_sequences(tim_seqs, pad_value=0)
@@ -124,8 +146,8 @@ def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, step
                 pred = int(pred_ids[i].item())
                 predictions[i].append(pred)
                 loc_seqs[i].append(pred)
-                last_time = tim_seqs[i][-1] if tim_seqs[i] else 0
-                tim_seqs[i].append(last_time)
+                next_tim = next_time_slot(tim_seqs[i], tim_size)
+                tim_seqs[i].append(next_tim)
         return predictions
 
     # attn_local_long (fallback to per-sample greedy)
@@ -146,8 +168,8 @@ def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, step
             pred = int(torch.argmax(step_scores).item())
             sample_predictions.append(pred)
             loc_seq.append(pred)
-            last_time = tim_seq[-1] if tim_seq else 0
-            tim_seq.append(last_time)
+            next_tim = next_time_slot(tim_seq, tim_size)
+            tim_seq.append(next_tim)
         predictions[i] = sample_predictions
     return predictions
 
@@ -288,7 +310,7 @@ if __name__ == '__main__':
         for i in tqdm(range(0, len(trajectories), args.batch_size)):
             batch = trajectories[i:i + args.batch_size]
             batch_labels = labels[i:i + args.batch_size]
-            preds = predict_batch(model, batch, args.model_mode, args.steps, device)
+            preds = predict_batch(model, batch, args.model_mode, args.steps, params.tim_size, device)
             for label, pred_seq in zip(batch_labels, preds):
                 padded_pred = pred_seq + [''] * max(0, args.steps - len(pred_seq))
                 str_preds = [str(p) for p in padded_pred[:args.steps]]
