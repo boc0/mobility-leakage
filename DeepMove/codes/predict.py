@@ -2,7 +2,7 @@ import os
 import argparse
 import pickle
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 
 import torch
 from tqdm import tqdm
@@ -72,105 +72,101 @@ def next_time_slot(tim_seq: List[int], tim_size: int) -> int:
     return (last + delta) % tim_size
 
 
-def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, steps: int, tim_size: int, device):
-    if steps <= 0 or not batch_data:
-        return [[] for _ in batch_data]
+def get_next_step_log_probs(model, loc_seq: List[int], tim_seq: List[int], uid_idx: int,
+                            model_mode: str, device) -> torch.Tensor:
+    """Return log-probabilities for the next location given current history."""
 
-    batch_size = len(batch_data)
-    predictions = [[] for _ in range(batch_size)]
-
-    loc_seqs = [list(entry['loc_seq']) for entry in batch_data]
-    tim_seqs = [list(entry['tim_seq']) for entry in batch_data]
+    loc_tensor = torch.tensor(loc_seq, dtype=torch.long, device=device).unsqueeze(1)
+    tim_tensor = torch.tensor(tim_seq, dtype=torch.long, device=device).unsqueeze(1)
 
     if model_mode in ['simple', 'simple_long']:
-        for _ in range(steps):
-            lengths = [len(seq) for seq in loc_seqs]
+        scores = model(loc_tensor, tim_tensor)
+    elif model_mode == 'attn_avg_long_user':
+        history_count = [1] * len(loc_seq)
+        uid_tensor = torch.tensor([uid_idx], dtype=torch.long, device=device)
+        scores = model(
+            loc_tensor,
+            tim_tensor,
+            loc_tensor,
+            tim_tensor,
+            history_count,
+            uid_tensor,
+            target_len=1,
+        )
+    else:  # attn_local_long
+        scores = model(loc_tensor, tim_tensor, target_len=1)
 
-            loc_tensor, _ = pad_sequences(loc_seqs, pad_value=0)
-            tim_tensor, _ = pad_sequences(tim_seqs, pad_value=0)
-            loc_tensor = loc_tensor.to(device)
-            tim_tensor = tim_tensor.to(device)
+    if scores.dim() == 1:
+        return scores
+    if scores.dim() == 2:
+        return scores[-1]
+    # shape (tgt_len, batch, vocab)
+    return scores[-1, 0, :]
 
-            scores = model(loc_tensor, tim_tensor)
-            if scores.dim() == 2:
-                scores = scores.unsqueeze(1)
-            scores = scores.transpose(0, 1).contiguous()
 
-            length_tensor = torch.tensor(lengths, device=device)
-            idx_tensor = length_tensor - 1
-            batch_indices = torch.arange(batch_size, device=device)
-            step_scores = scores[batch_indices, idx_tensor]
-            pred_ids = step_scores.argmax(dim=-1)
+def beam_search_predict(model, loc_seq: List[int], tim_seq: List[int], uid_idx: int,
+                        model_mode: str, steps: int, tim_size: int, beam_width: int,
+                        device) -> List[int]:
+    if steps <= 0:
+        return []
 
-            for i in range(batch_size):
-                pred = int(pred_ids[i].item())
-                predictions[i].append(pred)
-                loc_seqs[i].append(pred)
-                next_tim = next_time_slot(tim_seqs[i], tim_size)
-                tim_seqs[i].append(next_tim)
-        return predictions
+    beam_width = max(1, beam_width)
+    initial = (list(loc_seq), list(tim_seq), [], 0.0)
+    beams: List[Tuple[List[int], List[int], List[int], float]] = [initial]
 
-    if model_mode == 'attn_avg_long_user':
-        uid_tensor_template = torch.tensor([entry['uid_idx'] for entry in batch_data], dtype=torch.long, device=device)
+    for _ in range(steps):
+        candidates: List[Tuple[List[int], List[int], List[int], float]] = []
+        for curr_loc, curr_tim, preds, logp in beams:
+            if not curr_loc or not curr_tim:
+                # model expects at least one element; skip invalid beam
+                continue
 
-        for _ in range(steps):
-            lengths = [len(seq) for seq in loc_seqs]
+            next_log_probs = get_next_step_log_probs(model, curr_loc, curr_tim, uid_idx, model_mode, device)
+            vocab_size = next_log_probs.size(0)
+            k = min(beam_width, vocab_size)
+            topk = torch.topk(next_log_probs, k)
+            next_time = next_time_slot(curr_tim, tim_size)
 
-            loc_tensor, _ = pad_sequences(loc_seqs, pad_value=0)
-            tim_tensor, _ = pad_sequences(tim_seqs, pad_value=0)
-            loc_tensor = loc_tensor.to(device)
-            tim_tensor = tim_tensor.to(device)
+            for score, loc_id in zip(topk.values.tolist(), topk.indices.tolist()):
+                loc_id = int(loc_id)
+                new_loc = curr_loc + [loc_id]
+                new_tim = curr_tim + [next_time]
+                new_preds = preds + [loc_id]
+                candidates.append((new_loc, new_tim, new_preds, logp + score))
 
-            history_counts = [[1] * len(seq) for seq in loc_seqs]
-            target_lengths = [1] * batch_size
+        if not candidates:
+            break
 
-            scores = model(
-                loc_tensor,
-                tim_tensor,
-                loc_tensor,
-                tim_tensor,
-                history_counts,
-                uid_tensor_template,
-                target_lengths,
-            )
+        candidates.sort(key=lambda x: x[3], reverse=True)
+        beams = candidates[:beam_width]
 
-            if scores.dim() == 1:
-                scores = scores.view(1, 1, -1)
-            elif scores.dim() == 2:
-                scores = scores.unsqueeze(1)
-            scores = scores.transpose(0, 1).contiguous()
-            step_scores = scores[:, -1, :]
-            pred_ids = step_scores.argmax(dim=-1)
+    if not beams:
+        return []
 
-            for i in range(batch_size):
-                pred = int(pred_ids[i].item())
-                predictions[i].append(pred)
-                loc_seqs[i].append(pred)
-                next_tim = next_time_slot(tim_seqs[i], tim_size)
-                tim_seqs[i].append(next_tim)
-        return predictions
+    best = max(beams, key=lambda x: x[3])
+    return best[2][:steps]
 
-    # attn_local_long (fallback to per-sample greedy)
-    for i in range(batch_size):
-        loc_seq = list(loc_seqs[i])
-        tim_seq = list(tim_seqs[i])
-        sample_predictions = []
-        for _ in range(steps):
-            loc_tensor = torch.tensor(loc_seq, dtype=torch.long, device=device).unsqueeze(1)
-            tim_tensor = torch.tensor(tim_seq, dtype=torch.long, device=device).unsqueeze(1)
-            scores = model(loc_tensor, tim_tensor, target_len=1)
-            if scores.dim() == 1:
-                step_scores = scores
-            elif scores.dim() == 2:
-                step_scores = scores[-1]
-            else:
-                step_scores = scores[-1, 0, :]
-            pred = int(torch.argmax(step_scores).item())
-            sample_predictions.append(pred)
-            loc_seq.append(pred)
-            next_tim = next_time_slot(tim_seq, tim_size)
-            tim_seq.append(next_tim)
-        predictions[i] = sample_predictions
+
+def predict_batch(model, batch_data: List[Dict[str, Any]], model_mode: str, steps: int,
+                  tim_size: int, beam_width: int, device):
+    if not batch_data:
+        return []
+
+    predictions = []
+    for entry in batch_data:
+        preds = beam_search_predict(
+            model,
+            entry['loc_seq'],
+            entry['tim_seq'],
+            entry['uid_idx'],
+            model_mode,
+            steps,
+            tim_size,
+            beam_width,
+            device,
+        )
+        predictions.append(preds)
+
     return predictions
 
 
@@ -200,10 +196,8 @@ if __name__ == '__main__':
                         help="number of future steps to predict")
     parser.add_argument('--batch_size', type=int, default=64,
                         help="batch size for processing trajectories")
-    parser.add_argument('--merge_sessions', action='store_true', default=True,
-                        help="merge sessions per user before predicting")
-    parser.add_argument('--no_merge', dest='merge_sessions', action='store_false',
-                        help="do not merge sessions; predict each session separately")
+    parser.add_argument('--beam_width', type=int, default=5,
+                        help="beam width for decoding (1 matches greedy)")
     parser.add_argument('--verbose', action='store_true', default=False,
                         help="print predictions to stdout")
     args = parser.parse_args()
@@ -286,31 +280,30 @@ if __name__ == '__main__':
             uid_idx = user_to_idx.get(str(label), None)
             if uid_idx is None:
                 continue
-
-            if args.merge_sessions:
-                sess_ids = sorted(udata['sessions'].keys())
-                merged = []
-                for sid in sess_ids:
-                    merged.extend(udata['sessions'][sid])
-                if len(merged) < 1:
-                    continue
-                locs = [p[0] for p in merged]
-                tims = [p[1] for p in merged]
-                trajectories.append({'loc_seq': locs, 'tim_seq': tims, 'uid_idx': uid_idx})
-                labels.append(label)
-            else:
-                for sess_id, sess in udata['sessions'].items():
-                    if len(sess) < 1:
-                        continue
-                    locs = [p[0] for p in sess]
-                    tims = [p[1] for p in sess]
-                    trajectories.append({'loc_seq': locs, 'tim_seq': tims, 'uid_idx': uid_idx})
-                    labels.append(f"{label}_{sess_id}")
+            # merge sessions
+            sess_ids = sorted(udata['sessions'].keys())
+            merged = []
+            for sid in sess_ids:
+                merged.extend(udata['sessions'][sid])
+            if len(merged) < 1:
+                continue
+            locs = [p[0] for p in merged]
+            tims = [p[1] for p in merged]
+            trajectories.append({'loc_seq': locs, 'tim_seq': tims, 'uid_idx': uid_idx})
+            labels.append(label)
 
         for i in tqdm(range(0, len(trajectories), args.batch_size)):
             batch = trajectories[i:i + args.batch_size]
             batch_labels = labels[i:i + args.batch_size]
-            preds = predict_batch(model, batch, args.model_mode, args.steps, params.tim_size, device)
+            preds = predict_batch(
+                model,
+                batch,
+                args.model_mode,
+                args.steps,
+                params.tim_size,
+                args.beam_width,
+                device,
+            )
             for label, pred_seq in zip(batch_labels, preds):
                 padded_pred = pred_seq + [''] * max(0, args.steps - len(pred_seq))
                 str_preds = [str(p) for p in padded_pred[:args.steps]]
