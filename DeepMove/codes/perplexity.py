@@ -240,10 +240,6 @@ if __name__ == '__main__':
                         help="optional output. For a single file, a CSV file path. For a directory, an output directory path.")
     parser.add_argument('--metadata_json', type=str, default=None,
                         help="path to metadata json file (required for correct model size)")
-    parser.add_argument('--merge_sessions', action='store_true',
-                        help="merge all sessions per user into one long sequence before scoring", default=True)
-    parser.add_argument('--no_merge', dest='merge_sessions', action='store_false',
-                        help="do not merge sessions; score each session separately")
     parser.add_argument('--verbose', action='store_true',
                         help='Also print each result line to stdout even when writing to an output file')
     parser.add_argument('--batch_size', type=int, default=64,
@@ -342,42 +338,26 @@ if __name__ == '__main__':
                 # User from pk not present in metadata.json; skip
                 continue
 
-            if args.merge_sessions:
-                # Merge all sessions into one long sequence (chronological by session id)
-                sess_ids = sorted(udata['sessions'].keys())
-                merged = []
-                for sid in sess_ids:
-                    merged.extend(udata['sessions'][sid])
-                if len(merged) < 2:
-                    continue
-                locs = [p[0] for p in merged]
-                tims = [p[1] for p in merged]
-                if args.model_mode == 'attn_local_long':
-                    loc_seq = locs
-                    tim_seq = tims
-                else:
-                    loc_seq = locs[:-1]
-                    tim_seq = tims[:-1]
-                target_loc = locs[1:]
-                trajectories_batch.append((loc_seq, tim_seq, target_loc, uid_idx))
-                labels_batch.append(label)
+            # Merge all sessions into one long sequence (chronological by session id)
+            sess_ids = sorted(udata['sessions'].keys())
+            merged = []
+            for sid in sess_ids:
+                merged.extend(udata['sessions'][sid])
+            if len(merged) < 2:
+                continue
+            locs = [p[0] for p in merged]
+            tims = [p[1] for p in merged]
+            if args.model_mode == 'attn_local_long':
+                loc_seq = locs
+                tim_seq = tims
             else:
-                # Score each session separately (original behavior)
-                for sess_id, sess in udata['sessions'].items():
-                    if len(sess) < 2:
-                        continue
-                    locs = [p[0] for p in sess]
-                    tims = [p[1] for p in sess]
-                    if args.model_mode == 'attn_local_long':
-                        loc_seq = locs
-                        tim_seq = tims
-                    else:
-                        loc_seq = locs[:-1]
-                        tim_seq = tims[:-1]
-                    target_loc = locs[1:]
-                    trajectories_batch.append((loc_seq, tim_seq, target_loc, uid_idx))
-                    labels_batch.append(label)
-        
+                loc_seq = locs[:-1]
+                tim_seq = tims[:-1]
+            target_loc = locs[1:]
+            trajectories_batch.append((loc_seq, tim_seq, target_loc, uid_idx))
+            labels_batch.append(label)
+
+
         # Process trajectories in batches
         for i in tqdm(range(0, len(trajectories_batch), args.batch_size)):
             batch = trajectories_batch[i:i+args.batch_size]
