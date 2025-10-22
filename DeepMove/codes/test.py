@@ -294,10 +294,6 @@ if __name__ == '__main__':
                         help="optional output. For a single file, a CSV file path. For a directory, an output directory path.")
     parser.add_argument('--metadata_json', type=str, default=None,
                         help="path to metadata json file (required for correct model size)")
-    parser.add_argument('--merge_sessions', action='store_true',
-                        help="merge all sessions per user into one long sequence before scoring", default=True)
-    parser.add_argument('--no_merge', dest='merge_sessions', action='store_false',
-                        help="do not merge sessions; score each session separately")
     parser.add_argument('--mode', choices=['topk', 'rank'], default='topk', help='Whether to get top-k accuracy (topk or rank)')
     # add additional argument for mode topk to define the k values
     parser.add_argument('--k_values', '--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy')
