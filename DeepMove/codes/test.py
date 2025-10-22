@@ -367,6 +367,14 @@ if __name__ == '__main__':
             single_out_f.write("tid,mean_rank\n")
 
     for pk_file in pk_files:
+        if args.data_dir:
+            basename = os.path.basename(pk_file)
+            out_name = os.path.splitext(basename)[0] + f'_{args.mode}.csv'
+            out_path = os.path.join(output_dir, out_name)
+
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                print(f"⏭️ Skipping {pk_file} — already processed at {out_path}")
+                continue
         print(f"Processing {pk_file}...")
 
         # Determine current output file handle

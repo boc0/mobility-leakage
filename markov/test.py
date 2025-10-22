@@ -120,8 +120,16 @@ def main():
         output_filename = os.path.splitext(fname)[0] + f'_{args.mode}.csv'
         output_path = os.path.join(args.output_dir, output_filename)
 
-        test_file(model, input_path, output_path, args.mode, args.k_values)
-
+        # ✅ Skip file if output already exists and is non-empty
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"⏭️ Skipping {fname} — results already exist at {output_path}")
+            continue
+        try:
+            test_file(model, input_path, output_path, args.mode, args.k_values)
+            print(f"✅ Done: {output_filename}")
+        except Exception as e:
+            print(f"❌ Error on {fname}: {e}")
+            continue
 
 if __name__ == '__main__':
     main()

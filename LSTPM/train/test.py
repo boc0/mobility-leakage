@@ -118,6 +118,14 @@ def main():
                 single_out_f.write("tid,mean-rank\n")
 
     for pk in pk_files:
+        if args.data_dir:
+            base = os.path.splitext(os.path.basename(pk))[0]
+            out_path = os.path.join(output_dir, f"{base}_{args.mode}.csv")
+
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                print(f"⏭️ Skipping {pk} — already processed at {out_path}")
+                continue
+
         print(f"Processing {pk}...")
 
         vid_list, uid_list, data_neural, poi_coordinate = load_data(pk)
