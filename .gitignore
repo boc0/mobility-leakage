@@ -13,4 +13,4 @@ LSTPM/train/data/*
 results/*
 */venv/
 *.sif
-analysis_results/*
+analysis_outputs/*
