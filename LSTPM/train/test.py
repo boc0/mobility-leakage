@@ -206,7 +206,20 @@ def main():
                     mask_non_local_t = torch.FloatTensor(np.array(mask_batch_non_local)).to(device)
                     user_t = torch.LongTensor(np.array([u_idx])).to(device)
 
-                    logp_seq = model(user_t, padded_seq_t, mask_non_local_t, [sid], [tim], False, poi_distance_matrix, [seq_dil])
+                    tim_tensor = torch.LongTensor(np.array([tim + [0] * (max_len - len(tim))])).to(device)
+                    dilated_tensor = torch.LongTensor(np.array([seq_dil + [-1] * (max_len - len(seq_dil))])).to(device)
+                    session_tensor = torch.LongTensor(np.array([sid])).to(device)
+
+                    logp_seq = model(
+                        user_t,
+                        padded_seq_t,
+                        mask_non_local_t,
+                        session_tensor,
+                        tim_tensor,
+                        False,
+                        poi_distance_matrix,
+                        dilated_tensor,
+                    )
                     predictions_logp = logp_seq[:, :-1].squeeze(0)
                     targets = padded_seq_t[:, 1:].squeeze(0)
                     if predictions_logp.numel() == 0 or targets.numel() == 0:
