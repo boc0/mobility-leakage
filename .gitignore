@@ -11,6 +11,7 @@ LSTPM/train/data/*
 *.json
 *.zip
 results/*
-*/venv/
+*/venv/*
 *.sif
 analysis_outputs/*
+Graph-Flashback/*
