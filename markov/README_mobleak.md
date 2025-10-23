@@ -74,3 +74,14 @@ python3 markov/test.py --model run_markov/model.json --data_dir path/to/eval_dir
 - `--k_values` specifies the k values for top-k accuracy.
 - Writes one CSV per input file to `--output_dir`, named `<input_basename>_topk.csv`.
 
+### Trajectory difficulty proxy
+
+Run `markov/extract.py` to convert Markov predictions into rank-based extraction difficulty scores for each trajectory.
+
+```bash
+python3 markov/extract.py --model run0/model.json --data_dir path/to/eval_dir --prefix_lengths 0 3 5 --alpha 0.5 --output run0/extraction
+```
+
+- Works with DeepMove `.pk` files (`--data_pk`) or raw CSVs (`--data_csv`), or processes an entire directory with `--data_dir`.
+- Outputs a CSV listing each trajectory id with columns `prefix-<N>` describing difficulty under each of the input different history truncation lengths.
+

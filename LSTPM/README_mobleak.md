@@ -97,3 +97,14 @@ python3 LSTPM/train/perplexity.py --data_dir run0/preprocessed --model_m run0/tr
 
 Both scripts can also be run on a single file too, by replacing the `--data_dir` argument with `--data_pk path/to/single/file.pk`.
 
+### Trajectory difficulty proxy
+
+Use `LSTPM/train/extract.py` to compute the same rank-based extraction difficulty proxy that is available for DeepMove checkpoints.
+
+```bash
+python3 LSTPM/train/extract.py --data_dir run0/preprocessed --model_m run0/training/res.m --distance run0/distance.pkl --prefix_lengths 0 3 5 --batch_size 256 --output run0/extraction
+```
+
+- Supports single-file mode with `--data_pk` (requires `--output`) or directory processing via `--data_dir`.
+- Each CSV row reports the trajectory id and proxy columns `prefix-<N>` built from batched model scores.
+

@@ -82,3 +82,14 @@ python3 DeepMove/codes/perplexity.py --metadata_json run0/metadata.json --model_
 where `<model_type>` is the same as before.
 
 Both `test.py` and `perplexity.py` can be run a single file too, by replacing the `--data_dir` argument with `--data_pk path/to/single/file.pk` and `--output` with a target path for the single output file.
+
+### Trajectory difficulty proxy
+
+Use `DeepMove/codes/extract.py` to turn model predictions into rank-based extraction difficulty scores for each trajectory.
+
+```bash
+python3 DeepMove/codes/extract.py --metadata_json run0/metadata.json --model_mode simple --model_path run0/training/res.m --data_dir run0/preprocessed --prefix_lengths 0 3 5 --batch_size 64 --output run0/extraction
+```
+
+- Accepts either a single `.pk` via `--data_pk` (with `--output` as the destination file) or a directory with `--data_dir` (writes one CSV per input).
+- Each output row contains the trajectory id and proxy columns `prefix-<N>` encoding ranks after truncating the history to that prefix length.
