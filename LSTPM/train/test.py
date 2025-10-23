@@ -73,6 +73,7 @@ def main():
     parser.add_argument('--distance', type=str, default=None, help='Optional path to distance.pkl; falls back to file-local or building from vid_lookup')
     parser.add_argument('--mode', choices=['topk', 'rank'], default='topk', help='Whether to get top-k accuracy (topk) or mean rank (rank)')
     parser.add_argument('--k_values', '--ks', type=int, nargs='+', default=[1,5,10], help='List of k values for top-k accuracy (when --mode topk)')
+    parser.add_argument('--batch_size', type=int, default=256, help='Batch size for batched session evaluation')
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -148,7 +149,7 @@ def main():
         poi_distance_matrix = np.asarray(poi_distance_matrix, dtype=np.float32)
 
         if np.any((poi_distance_matrix == 0) & ~np.eye(poi_distance_matrix.shape[0], dtype=bool)):
-            print("Warning: distance matrix has zero(s) off the diagonal; this may cause instability")
+            # print("Warning: distance matrix has zero(s) off the diagonal; this may cause instability")
             poi_distance_matrix[(poi_distance_matrix == 0) & ~np.eye(poi_distance_matrix.shape[0], dtype=bool)] = 1e-9
             np.fill_diagonal(poi_distance_matrix, 1e-9)
 
@@ -187,65 +188,91 @@ def main():
             else:
                 out_f.write("tid,mean-rank\n")
 
-        with torch.no_grad():
-            for u_idx in sorted(data_neural.keys()):
-                u_label = idx_to_user.get(u_idx, str(u_idx))
-                sessions = data_neural[u_idx]['sessions']
-
-                all_ranks = []
-                for sid in sorted(sessions.keys()):
-                    seq = [p[0] for p in sessions[sid]]
-                    tim = [lstpm_train.to_tid48(p[1]) for p in sessions[sid]]
-                    if len(seq) < 2:
-                        continue
-                    seq_dil = lstpm_train.create_dilated_rnn_input(list(seq), poi_distance_matrix)
-                    max_len = len(seq)
-                    padded_seq, mask_batch_ix, mask_batch_non_local = lstpm_train.pad_batch_of_lists_masks([seq], max_len)
-                    padded_seq_t = torch.LongTensor(np.array(padded_seq)).to(device)
-                    mask_ix_t = torch.FloatTensor(np.array(mask_batch_ix)).to(device)
-                    mask_non_local_t = torch.FloatTensor(np.array(mask_batch_non_local)).to(device)
-                    user_t = torch.LongTensor(np.array([u_idx])).to(device)
-
-                    tim_tensor = torch.LongTensor(np.array([tim + [0] * (max_len - len(tim))])).to(device)
-                    dilated_tensor = torch.LongTensor(np.array([seq_dil + [-1] * (max_len - len(seq_dil))])).to(device)
-                    session_tensor = torch.LongTensor(np.array([sid])).to(device)
-
-                    logp_seq = model(
-                        user_t,
-                        padded_seq_t,
-                        mask_non_local_t,
-                        session_tensor,
-                        tim_tensor,
-                        False,
-                        poi_distance_matrix,
-                        dilated_tensor,
-                    )
-                    predictions_logp = logp_seq[:, :-1].squeeze(0)
-                    targets = padded_seq_t[:, 1:].squeeze(0)
-                    if predictions_logp.numel() == 0 or targets.numel() == 0:
-                        continue
-
-                    sorted_probs, sorted_indices = predictions_logp.unsqueeze(0).sort(dim=2, descending=True)
-                    matches = sorted_indices == targets.unsqueeze(0).unsqueeze(-1)
-                    ranks = matches.to(torch.long).argmax(dim=2)
-                    all_ranks.extend(ranks.squeeze(0).cpu().numpy().tolist())
-
-                if len(all_ranks) == 0:
+        samples = []
+        user_order = []
+        for u_idx in sorted(data_neural.keys()):
+            u_label = idx_to_user.get(u_idx, str(u_idx))
+            if u_label not in user_order:
+                user_order.append(u_label)
+            sessions = data_neural[u_idx]['sessions']
+            for sid in sorted(sessions.keys()):
+                seq = [p[0] for p in sessions[sid]]
+                if len(seq) < 2:
                     continue
-                if args.mode == 'topk':
-                    topk = {k: sum(1 for r in all_ranks if r < k) / len(all_ranks) for k in args.k_values}
-                    line = f"{u_label}," + ",".join(str(topk[k]) for k in args.k_values)
-                    if out_f:
-                        out_f.write(line + "\n")
-                    else:
-                        print(line)
-                else:
-                    mean_rank = sum(all_ranks) / len(all_ranks)
-                    line = f"{u_label},{mean_rank}"
-                    if out_f:
-                        out_f.write(line + "\n")
-                    else:
-                        print(line)
+                tim = [lstpm_train.to_tid48(p[1]) for p in sessions[sid]]
+                seq_dil = lstpm_train.create_dilated_rnn_input(list(seq), poi_distance_matrix)
+                samples.append({
+                    'user_idx': u_idx,
+                    'label': u_label,
+                    'session_id': sid,
+                    'seq': seq,
+                    'tim': tim,
+                    'seq_dil': seq_dil,
+                })
+
+        if not samples:
+            if output_dir is not None and out_f:
+                out_f.close()
+            continue
+
+        user_ranks = {label: [] for label in user_order}
+        batch_size = max(int(args.batch_size), 1)
+        total_batches = (len(samples) + batch_size - 1) // batch_size
+
+        with torch.no_grad():
+            for start in range(0, len(samples), batch_size):
+                batch = samples[start:start + batch_size]
+                lengths = [len(s['seq']) for s in batch]
+                max_len_batch = max(lengths)
+
+                padded_seq, _, mask_non_local = lstpm_train.pad_batch_of_lists_masks([s['seq'] for s in batch], max_len_batch)
+                padded_seq_t = torch.LongTensor(padded_seq).to(device)
+                mask_non_local_t = torch.FloatTensor(mask_non_local).to(device)
+                user_tensor = torch.LongTensor([s['user_idx'] for s in batch]).to(device)
+                padded_tim_t = torch.LongTensor(lstpm_train.pad_batch_of_lists([s['tim'] for s in batch], max_len_batch, pad_value=0)).to(device)
+                padded_dilated_t = torch.LongTensor(lstpm_train.pad_batch_of_lists([s['seq_dil'] for s in batch], max_len_batch, pad_value=-1)).to(device)
+                session_tensor = torch.LongTensor([s['session_id'] for s in batch]).to(device)
+
+                logp_seq = model(
+                    user_tensor,
+                    padded_seq_t,
+                    mask_non_local_t,
+                    session_tensor,
+                    padded_tim_t,
+                    False,
+                    poi_distance_matrix,
+                    padded_dilated_t,
+                )
+                predictions_logp = logp_seq[:, :-1, :]
+                targets_full = padded_seq_t[:, 1:]
+
+                for idx, sample in enumerate(batch):
+                    tgt_len = lengths[idx] - 1
+                    if tgt_len <= 0:
+                        continue
+                    preds = predictions_logp[idx, :tgt_len, :]
+                    tgt = targets_full[idx, :tgt_len]
+                    target_scores = preds.gather(1, tgt.unsqueeze(1))
+                    ranks = (preds > target_scores).sum(dim=1)
+                    ranks_list = ranks.detach().cpu().tolist()
+                    if not ranks_list:
+                        continue
+                    user_ranks[sample['label']].extend(ranks_list)
+
+        for label in user_order:
+            ranks_list = user_ranks.get(label, [])
+            if not ranks_list:
+                continue
+            if args.mode == 'topk':
+                topk = {k: sum(1 for r in ranks_list if r < k) / len(ranks_list) for k in args.k_values}
+                line = f"{label}," + ",".join(str(topk[k]) for k in args.k_values)
+            else:
+                mean_rank = sum(ranks_list) / len(ranks_list)
+                line = f"{label},{mean_rank}"
+            if out_f:
+                out_f.write(line + "\n")
+            else:
+                print(line)
 
         if output_dir is not None and out_f:
             out_f.close()
