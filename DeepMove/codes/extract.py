@@ -125,11 +125,10 @@ def rank_ground_truth(scores, targets):
     return ranks.tolist()
 
 
-def trajectory_rank_proxy(ranks: List[int], vocab_size: int, max_len: int) -> int:
+def trajectory_rank_proxy(ranks: List[int], vocab_size: int, max_len: int, prefix_len: int = 0) -> int:
     total = 0
-    n = len(ranks)
     for i, r in enumerate(ranks, start=1):
-        exponent = max_len - i
+        exponent = max(max_len - prefix_len - i, 0)
         total += (r - 1) * (vocab_size ** exponent)
     return total
 
@@ -207,14 +206,28 @@ def ensure_directory(path: str):
         os.makedirs(directory, exist_ok=True)
 
 
-def process_file(pk_path, output_path, model, model_mode, user_to_idx, params, steps, batch_size):
+def process_file(pk_path, output_path, model, model_mode, user_to_idx, params, steps, batch_size, prefix_lengths):
     data = pickle.load(open(pk_path, 'rb'))
     trajectories = prepare_trajectories(data, user_to_idx, model_mode, steps)
 
     ensure_directory(output_path)
 
+    # normalize prefix lengths (non-negative, preserve order, drop duplicates)
+    normalized_prefix = []
+    seen_prefix = set()
+    for value in prefix_lengths:
+        val = max(int(value), 0)
+        if val in seen_prefix:
+            continue
+        seen_prefix.add(val)
+        normalized_prefix.append(val)
+    if not normalized_prefix:
+        raise ValueError("prefix_lengths must contain at least one non-negative integer.")
+
+    header_cols = ",".join(f"prefix-{p}" for p in normalized_prefix)
+
     with open(output_path, 'w') as out_f:
-        out_f.write("tid,digits,rank_proxy\n")
+        out_f.write(f"tid,{header_cols}\n")
 
         if not trajectories:
             return 0
@@ -232,9 +245,11 @@ def process_file(pk_path, output_path, model, model_mode, user_to_idx, params, s
                 if targets.numel() == 0:
                     continue
                 ranks = rank_ground_truth(scores, targets)
-                proxy = trajectory_rank_proxy(ranks, params.loc_size, max_seq_len)
-                num_digits = len(str(proxy))
-                out_f.write(f"{entry['label']},{num_digits},{proxy}\n")
+                proxies = [
+                    str(trajectory_rank_proxy(ranks, params.loc_size, max_seq_len, prefix_len=p))
+                    for p in normalized_prefix
+                ]
+                out_f.write(f"{entry['label']},{','.join(proxies)}\n")
 
     return len(trajectories)
 
@@ -252,6 +267,8 @@ if __name__ == '__main__':
     parser.add_argument('--steps', type=int, default=None,
                         help="maximum number of steps to consider per trajectory")
     parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--prefix_lengths', '--prefix_lens', type=int, nargs='+', default=[0],
+                        help="List of prefix lengths for rank proxy computation (non-negative integers)")
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -305,6 +322,7 @@ if __name__ == '__main__':
                 params,
                 args.steps,
                 args.batch_size,
+                args.prefix_lengths,
             )
             if processed == 0:
                 print(f"Warning: No valid trajectories found in {pk_path}")
@@ -318,6 +336,7 @@ if __name__ == '__main__':
             params,
             args.steps,
             args.batch_size,
+            args.prefix_lengths,
         )
         if processed == 0:
             raise SystemExit("No valid trajectories found for extraction.")
