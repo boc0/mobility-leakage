@@ -12,6 +12,7 @@ from math import radians, cos, sin, asin, sqrt
 from collections import deque,Counter
 import time
 
+torch.autograd.set_detect_anomaly(True)
 # auto-select device: MPS (for M1/M2) > CUDA > CPU
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
@@ -241,28 +242,50 @@ class Model(nn.Module):
         return exp_logits / denom
 
     def _compute_dilated_states(self, embeddings, dilated_indices, mask):
-        batch_size, seq_len, _ = embeddings.shape
-        hidden_store = embeddings.new_zeros(batch_size, seq_len, self.hidden_units)
-        cell_store = embeddings.new_zeros(batch_size, seq_len, self.hidden_units)
-        if dilated_indices.dim() != 2:
-            raise ValueError("sequence_dilated_rnn_index_batch must be rank-2 tensor")
-        mask_float = mask.float()
-        for t in range(seq_len):
-            input_t = embeddings[:, t, :]
-            parent_idx = dilated_indices[:, t]
-            parent_clamped = parent_idx.clamp(min=0)
-            gather_idx = parent_clamped.view(batch_size, 1, 1).expand(-1, 1, self.hidden_units)
-            prev_h = torch.gather(hidden_store, 1, gather_idx).squeeze(1)
-            prev_c = torch.gather(cell_store, 1, gather_idx).squeeze(1)
-            valid_parent = (parent_idx >= 0).unsqueeze(1).float()
-            prev_h = prev_h * valid_parent
-            prev_c = prev_c * valid_parent
-            h_t, c_t = self.dilated_rnn(input_t, (prev_h, prev_c))
-            active = mask_float[:, t].unsqueeze(1)
+        # embeddings: (B, T, E); dilated_indices: (B, T) with -1 meaning “no parent”
+        B, T, _ = embeddings.shape
+        H = self.hidden_units
+        device = embeddings.device
+        mask_f = mask.float()
+
+        # bank[0] is zeros; bank[t+1] will be h_t
+        bank_h = [embeddings.new_zeros(B, H)]
+        bank_c = [embeddings.new_zeros(B, H)]
+        out_h = []
+
+        for t in range(T):
+            # parent index per batch (shift by +1 so -1 -> 0)
+            parents = dilated_indices[:, t]
+            # safety: parents must refer to strictly prior steps; clamp into [-1, t-1]
+            if t == 0:
+                parents = torch.full_like(parents, -1)
+            else:
+                parents = parents.clamp(min=-1, max=t-1)
+            # optional runtime check (helps debug any remaining bad indices)
+            if torch.any(parents >= t):
+                raise RuntimeError(f"Invalid dilated parent index at step t={t}: max={int(parents.max().item())}")
+            idx = (parents + 1).clamp(min=0).view(B, 1, 1).expand(-1, 1, H)
+
+            # stack previous states once per step; shapes (B, t+1, H)
+            prev_h_stack = torch.stack(bank_h, dim=1)
+            prev_c_stack = torch.stack(bank_c, dim=1)
+
+            prev_h = torch.gather(prev_h_stack, 1, idx).squeeze(1)
+            prev_c = torch.gather(prev_c_stack, 1, idx).squeeze(1)
+
+            inp_t = embeddings[:, t, :]
+            h_t, c_t = self.dilated_rnn(inp_t, (prev_h, prev_c))
+
+            active = mask_f[:, t].unsqueeze(1)
             h_t = h_t * active
             c_t = c_t * active
-            hidden_store[:, t, :] = h_t
-            cell_store[:, t, :] = c_t
+
+            bank_h.append(h_t)
+            bank_c.append(c_t)
+            out_h.append(h_t)
+
+        # (B, T, H)
+        hidden_store = torch.stack(out_h, dim=1)
         return hidden_store
 
     def _run_history_lstm(self, history_embeddings, history_mask, history_session_active):
@@ -715,14 +738,17 @@ def generate_queue(train_idx, mode, mode2):
 def create_dilated_rnn_input(session_sequence_current, poi_distance_matrix):
     sequence_length = len(session_sequence_current)
     session_sequence_current.reverse()
-    session_dilated_rnn_input_index = [0] * sequence_length
+    # -1 means “no parent”, safe for step t=0
+    session_dilated_rnn_input_index = [-1] * sequence_length
     for i in range(sequence_length - 1):
         current_poi = [session_sequence_current[i]]
         poi_before = session_sequence_current[i + 1 :]
         distance_row = poi_distance_matrix[current_poi]
         distance_row_explicit = distance_row[:, poi_before][0]
         index_closet = np.argmin(distance_row_explicit)
-        session_dilated_rnn_input_index[sequence_length - i - 1] = sequence_length-2-index_closet-i
+        parent_idx = sequence_length - 2 - index_closet - i  # points to a prior step
+        # store, actual safety clamp happens in forward
+        session_dilated_rnn_input_index[sequence_length - i - 1] = int(parent_idx)
     session_sequence_current.reverse()
     return session_dilated_rnn_input_index
 
