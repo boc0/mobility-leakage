@@ -140,7 +140,7 @@ def write_output(output_path: str, records: List[Tuple[str, List[int]]],
 
 
 def process_file(input_path: str, output_path: str, model: MarkovModel,
-                 prefix_lengths: List[int], steps: int, alpha: float = 1.0) -> int:
+                 prefix_lengths: List[int], steps: int, alpha: float) -> int:
     ext = os.path.splitext(input_path)[1].lower()
     if ext == '.pk':
         sequences = load_sequences_from_pk(input_path)

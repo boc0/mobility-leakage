@@ -12,7 +12,6 @@ from math import radians, cos, sin, asin, sqrt
 from collections import deque,Counter
 import time
 
-torch.autograd.set_detect_anomaly(True)
 # auto-select device: MPS (for M1/M2) > CUDA > CPU
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
@@ -54,12 +53,6 @@ def pad_batch_of_lists_masks_test(batch_of_lists, max_len):
     padded_mask = [[0.0]*(len(l) - 2) + [1.0] + [0.0] * (max_len - len(l) + 1) for l in batch_of_lists]
     padde_mask_non_local = [[1.0] * (len(l) - 1) + [0.0] * (max_len - len(l) + 1) for l in batch_of_lists]
     return padded, padded2, padded_mask, padde_mask_non_local
-
-def pad_batch_of_lists(batch_of_lists, max_len, pad_value=0):
-    """Pad a list of python lists to max_len with the provided pad_value."""
-    if max_len <= 0:
-        return [[] for _ in batch_of_lists]
-    return [lst + [pad_value] * (max_len - len(lst)) for lst in batch_of_lists]
 
 def to_tid48(t):
     """Convert various time encodings to 0-47 integer time-slot id.
@@ -105,32 +98,13 @@ class Model(nn.Module):
         self.emb_tim = nn.Embedding(48, 10)
         self.lstmcell = nn.LSTM(input_size=emb_size, hidden_size=hidden_units)
         self.lstmcell_history = nn.LSTM(input_size=emb_size, hidden_size=hidden_units)
-        self.linear = nn.Linear(hidden_units * 2, n_items)
+        self.linear = nn.Linear(hidden_units*2 , n_items)
         self.dropout = nn.Dropout(0.0)
         self.user_dropout = nn.Dropout(user_dropout)
         self.data_neural = data_neural
         self.tim_sim_matrix = tim_sim_matrix
-        self.dilated_rnn = nn.LSTMCell(input_size=emb_size, hidden_size=hidden_units)  # could be the same as self.lstmcell
+        self.dilated_rnn = nn.LSTMCell(input_size=emb_size, hidden_size=hidden_units)# could be the same as self.lstmcell
         self.linear1 = nn.Linear(hidden_units, hidden_units)
-
-        # caches for vectorized forward
-        self._distance_cache = None
-        self._distance_cache_id = None
-        self._distance_cache_device = None
-        self._poi_vocab_size = n_items
-        self._register_empty_session_cache()
-
-        if tim_sim_matrix is not None and len(tim_sim_matrix) > 0:
-            tim_tensor = torch.as_tensor(tim_sim_matrix, dtype=torch.float32)
-        else:
-            tim_tensor = torch.zeros(1, 1, dtype=torch.float32)
-        self.register_buffer("_tim_sim_matrix", tim_tensor, persistent=False)
-
-        if data_neural is not None and len(data_neural) > 0:
-            self._build_session_cache(data_neural)
-        else:
-            self._cache_ready = False
-
         self.init_weights()
 
     def init_weights(self):
@@ -144,319 +118,7 @@ class Model(nn.Module):
         for t in b:
             nn.init.constant_(t, 0)
 
-    def _register_empty_session_cache(self):
-        self.max_sessions = 0
-        self.max_session_len = 0
-        self.max_session_key = 0
-        self.register_buffer('_user_lookup', torch.full((1,), -1, dtype=torch.long), persistent=False)
-        self.register_buffer('_session_lookup', torch.full((1, 1), -1, dtype=torch.long), persistent=False)
-        self.register_buffer('_session_items', torch.zeros(1, 1, 1, dtype=torch.long), persistent=False)
-        self.register_buffer('_session_times', torch.zeros(1, 1, 1, dtype=torch.long), persistent=False)
-        self.register_buffer('_session_mask', torch.zeros(1, 1, 1, dtype=torch.bool), persistent=False)
-        self.register_buffer('_session_lengths', torch.zeros(1, 1, dtype=torch.long), persistent=False)
-        self._cache_ready = False
-
-    def _build_session_cache(self, data_neural):
-        user_ids = sorted(data_neural.keys())
-        if not user_ids:
-            self._cache_ready = False
-            return
-
-        self.max_sessions = max(len(data_neural[uid]['sessions']) for uid in user_ids)
-        self.max_sessions = max(self.max_sessions, 1)
-        session_key_candidates = [max(data_neural[uid]['sessions'].keys(), default=-1) for uid in user_ids]
-        self.max_session_key = max(session_key_candidates + [0])
-        session_lengths_all = [len(sess) for uid in user_ids for sess in data_neural[uid]['sessions'].values()]
-        self.max_session_len = max(session_lengths_all + [1])
-
-        user_lookup_size = max(user_ids) + 1
-        user_lookup = torch.full((user_lookup_size,), -1, dtype=torch.long)
-        for idx, uid in enumerate(user_ids):
-            user_lookup[uid] = idx
-
-        session_lookup = torch.full((len(user_ids), self.max_session_key + 1), -1, dtype=torch.long)
-        session_items = torch.zeros(len(user_ids), self.max_sessions, self.max_session_len, dtype=torch.long)
-        session_times = torch.zeros_like(session_items)
-        session_mask = torch.zeros(len(user_ids), self.max_sessions, self.max_session_len, dtype=torch.bool)
-        session_lengths = torch.zeros(len(user_ids), self.max_sessions, dtype=torch.long)
-
-        for u_pos, uid in enumerate(user_ids):
-            sessions = data_neural[uid]['sessions']
-            sorted_keys = sorted(sessions.keys())
-            for s_pos, s_key in enumerate(sorted_keys):
-                if s_pos >= self.max_sessions:
-                    break
-                if s_key <= self.max_session_key:
-                    session_lookup[u_pos, s_key] = s_pos
-                seq = sessions[s_key]
-                if not seq:
-                    continue
-                items = torch.tensor([step[0] for step in seq], dtype=torch.long)
-                times = torch.tensor([to_tid48(step[1]) for step in seq], dtype=torch.long)
-                length = items.numel()
-                length = min(length, self.max_session_len)
-                session_lengths[u_pos, s_pos] = length
-                session_items[u_pos, s_pos, :length] = items[:length]
-                session_times[u_pos, s_pos, :length] = times[:length]
-                session_mask[u_pos, s_pos, :length] = True
-
-        self._buffers['_user_lookup'] = user_lookup
-        self._buffers['_session_lookup'] = session_lookup
-        self._buffers['_session_items'] = session_items
-        self._buffers['_session_times'] = session_times
-        self._buffers['_session_mask'] = session_mask
-        self._buffers['_session_lengths'] = session_lengths
-        self._cache_ready = True
-
-    def _distance_tensor(self, poi_distance_matrix, device):
-        if isinstance(poi_distance_matrix, torch.Tensor):
-            if poi_distance_matrix.device != device:
-                return poi_distance_matrix.to(device)
-            return poi_distance_matrix
-
-        cache_invalid = (
-            self._distance_cache is None
-            or self._distance_cache_id != id(poi_distance_matrix)
-            or self._distance_cache_device != device
-        )
-        if cache_invalid:
-            tensor = torch.as_tensor(poi_distance_matrix, dtype=torch.float32, device=device)
-            self._distance_cache = tensor
-            self._distance_cache_id = id(poi_distance_matrix)
-            self._distance_cache_device = device
-        return self._distance_cache
-
-    @staticmethod
-    def _masked_softmax(logits, mask, dim):
-        mask_float = mask.float()
-        # Avoid -inf propagation when mask is all zeros
-        max_logits = torch.where(
-            mask,
-            logits,
-            torch.full_like(logits, float('-inf')),
-        ).max(dim=dim, keepdim=True).values
-        max_logits = torch.where(torch.isfinite(max_logits), max_logits, torch.zeros_like(max_logits))
-        shifted = logits - max_logits
-        exp_logits = torch.exp(shifted) * mask_float
-        denom = exp_logits.sum(dim=dim, keepdim=True).clamp_min(1e-9)
-        return exp_logits / denom
-
-    def _compute_dilated_states(self, embeddings, dilated_indices, mask):
-        # embeddings: (B, T, E); dilated_indices: (B, T) with -1 meaning “no parent”
-        B, T, _ = embeddings.shape
-        H = self.hidden_units
-        device = embeddings.device
-        mask_f = mask.float()
-
-        # bank[0] is zeros; bank[t+1] will be h_t
-        bank_h = [embeddings.new_zeros(B, H)]
-        bank_c = [embeddings.new_zeros(B, H)]
-        out_h = []
-
-        for t in range(T):
-            # parent index per batch (shift by +1 so -1 -> 0)
-            parents = dilated_indices[:, t]
-            # safety: parents must refer to strictly prior steps; clamp into [-1, t-1]
-            if t == 0:
-                parents = torch.full_like(parents, -1)
-            else:
-                parents = parents.clamp(min=-1, max=t-1)
-            # optional runtime check (helps debug any remaining bad indices)
-            if torch.any(parents >= t):
-                raise RuntimeError(f"Invalid dilated parent index at step t={t}: max={int(parents.max().item())}")
-            idx = (parents + 1).clamp(min=0).view(B, 1, 1).expand(-1, 1, H)
-
-            # stack previous states once per step; shapes (B, t+1, H)
-            prev_h_stack = torch.stack(bank_h, dim=1)
-            prev_c_stack = torch.stack(bank_c, dim=1)
-
-            prev_h = torch.gather(prev_h_stack, 1, idx).squeeze(1)
-            prev_c = torch.gather(prev_c_stack, 1, idx).squeeze(1)
-
-            inp_t = embeddings[:, t, :]
-            h_t, c_t = self.dilated_rnn(inp_t, (prev_h, prev_c))
-
-            active = mask_f[:, t].unsqueeze(1)
-            h_t = h_t * active
-            c_t = c_t * active
-
-            bank_h.append(h_t)
-            bank_c.append(c_t)
-            out_h.append(h_t)
-
-        # (B, T, H)
-        hidden_store = torch.stack(out_h, dim=1)
-        return hidden_store
-
-    def _run_history_lstm(self, history_embeddings, history_mask, history_session_active):
-        batch_size, num_sessions, max_len, _ = history_embeddings.shape
-        outputs = []
-        h = history_embeddings.new_zeros(1, batch_size, self.hidden_units)
-        c = history_embeddings.new_zeros(1, batch_size, self.hidden_units)
-        for s in range(num_sessions):
-            session_active = history_session_active[:, s].view(1, batch_size, 1)
-            seq_mask = history_mask[:, s, :].unsqueeze(2).float()
-            seq_emb = history_embeddings[:, s, :, :] * seq_mask
-            seq_emb_t = seq_emb.transpose(0, 1)
-            h_prev = h
-            c_prev = c
-            out, (h, c) = self.lstmcell_history(seq_emb_t, (h, c))
-            inactive = (~history_session_active[:, s]).view(1, batch_size, 1)
-            h = torch.where(inactive, h_prev, h)
-            c = torch.where(inactive, c_prev, c)
-            out = out.transpose(0, 1) * seq_mask
-            outputs.append(out)
-        if not outputs:
-            return history_embeddings.new_zeros(batch_size, num_sessions, max_len, self.hidden_units)
-        return torch.stack(outputs, dim=1)
-
-    def _compute_history_context(self, user_vectors, session_ids, sequence_tim_batch, item_vectors, mask, base_out, is_train, poi_distance_matrix):
-        batch_size, seq_len = item_vectors.shape
-        device = item_vectors.device
-        if seq_len <= 1 or not self._cache_ready:
-            return base_out.new_zeros(batch_size, seq_len, self.hidden_units)
-
-        cache_indices = self._user_lookup[user_vectors]
-        if (cache_indices < 0).any():
-            return base_out.new_zeros(batch_size, seq_len, self.hidden_units)
-
-        session_lookup_rows = self._session_lookup[cache_indices]
-        session_ids_clamped = session_ids.clamp(min=0, max=session_lookup_rows.size(1) - 1)
-        session_pos = torch.gather(session_lookup_rows, 1, session_ids_clamped.unsqueeze(1)).squeeze(1)
-        session_pos = torch.where(session_pos >= 0, session_pos, torch.zeros_like(session_pos))
-        history_counts = session_pos
-
-        max_sessions = self.max_sessions
-        session_indices = torch.arange(max_sessions, device=device).view(1, max_sessions)
-        history_session_mask = session_indices < history_counts.unsqueeze(1)
-
-        session_items = self._session_items[cache_indices]
-        session_times = self._session_times[cache_indices]
-        session_mask = self._session_mask[cache_indices]
-        session_lengths = self._session_lengths[cache_indices]
-
-        history_mask = session_mask & history_session_mask.unsqueeze(2)
-        valid_sessions = history_mask.any(dim=2)
-        history_session_active = valid_sessions & history_session_mask
-
-        history_embeddings = self.item_emb(session_items)
-        history_embeddings = history_embeddings * history_mask.unsqueeze(3).float()
-        history_outputs = self._run_history_lstm(history_embeddings, history_mask, history_session_active)
-
-        current_mask = mask[:, :-1]
-        if current_mask.size(1) <= 0:
-            return base_out.new_zeros(batch_size, seq_len, self.hidden_units)
-        current_mask_float = current_mask.unsqueeze(2).float()
-        current_session_embed = base_out[:, :-1, :]
-
-        tim_matrix = self._tim_sim_matrix.to(device)
-        current_tim = sequence_tim_batch[:, :-1]
-        time_features = tim_matrix[current_tim]
-        time_features = time_features.unsqueeze(2).expand(-1, -1, max_sessions, -1)
-        time_indices = session_times.unsqueeze(1)
-        jaccard_raw = torch.gather(time_features, -1, time_indices)
-        hist_mask_exp = history_mask.unsqueeze(1)
-        attn_weights = self._masked_softmax(jaccard_raw, hist_mask_exp, dim=-1)
-        sessions_represent = torch.einsum('btsl,bsld->btsd', attn_weights, history_outputs)
-        sessions_represent = sessions_represent * history_session_active.unsqueeze(1).unsqueeze(3).float()
-        sessions_represent = sessions_represent * current_mask_float.unsqueeze(2)
-
-        if is_train:
-            total_embed = (current_session_embed * current_mask_float).sum(dim=1, keepdim=True)
-            denom = current_mask_float.sum(dim=1, keepdim=True).clamp_min(1.0)
-            current_repr = total_embed / denom
-            current_repr = current_repr.repeat(1, current_session_embed.size(1), 1)
-        else:
-            prefix_sum = (current_session_embed * current_mask_float).cumsum(dim=1)
-            prefix_count = current_mask.cumsum(dim=1).unsqueeze(2).clamp_min(1.0)
-            current_repr = prefix_sum / prefix_count
-        current_repr = current_repr * current_mask_float
-
-        session_mask_exp = history_session_active.unsqueeze(1).expand(-1, current_repr.size(1), -1)
-        sim_logits = torch.einsum('btsd,btd->bts', sessions_represent, current_repr)
-        sim_weights = self._masked_softmax(sim_logits, session_mask_exp, dim=-1)
-        sim_weights = sim_weights * session_mask_exp.float()
-        out_y_current = torch.selu(self.linear1(torch.einsum('btsd,bts->btd', sessions_represent, sim_weights)))
-
-        layer_2_current = 0.5 * out_y_current + 0.5 * current_session_embed
-
-        distance_tensor = self._distance_tensor(poi_distance_matrix, device)
-        current_items = item_vectors[:, :-1]
-        distance_rows = distance_tensor[current_items]
-        distance_rows = distance_rows.unsqueeze(2).expand(-1, -1, max_sessions, -1)
-        distance_indices = session_items.unsqueeze(1)
-        distance_values = torch.gather(distance_rows, -1, distance_indices)
-        distance_values = distance_values * hist_mask_exp.float()
-        distance_sum = distance_values.sum(dim=-1)
-        distance_count = hist_mask_exp.float().sum(dim=-1)
-        avg_distance = torch.where(
-            distance_count > 0,
-            distance_sum / distance_count.clamp_min(1e-9),
-            torch.ones_like(distance_sum)
-        )
-        avg_distance = avg_distance * session_mask_exp.float()
-
-        layer2_logits = torch.einsum('btsd,btd->bts', sessions_represent, layer_2_current)
-        layer2_logits = layer2_logits / avg_distance.clamp_min(1e-6)
-        layer2_weights = self._masked_softmax(layer2_logits, session_mask_exp, dim=-1)
-        layer2_weights = layer2_weights * session_mask_exp.float()
-        out_layer_2 = torch.einsum('btsd,bts->btd', sessions_represent, layer2_weights)
-        out_layer_2 = out_layer_2 * current_mask_float
-
-        history_context = base_out.new_zeros(batch_size, seq_len, self.hidden_units)
-        history_context[:, :-1, :] = out_layer_2
-        return history_context
-
     def forward(self, user_vectors, item_vectors, mask_batch_ix_non_local, session_id_batch, sequence_tim_batch, is_train, poi_distance_matrix, sequence_dilated_rnn_index_batch):
-        device = item_vectors.device
-        user_vectors = user_vectors.to(device=device, dtype=torch.long)
-        mask_tensor = mask_batch_ix_non_local.to(device=device)
-
-        if not torch.is_tensor(session_id_batch):
-            session_ids = torch.as_tensor(session_id_batch, device=device, dtype=torch.long)
-        else:
-            session_ids = session_id_batch.to(device=device, dtype=torch.long)
-
-        if not torch.is_tensor(sequence_tim_batch):
-            sequence_tim_tensor = torch.as_tensor(sequence_tim_batch, device=device, dtype=torch.long)
-        else:
-            sequence_tim_tensor = sequence_tim_batch.to(device=device, dtype=torch.long)
-
-        if not torch.is_tensor(sequence_dilated_rnn_index_batch):
-            dilated_indices = torch.as_tensor(sequence_dilated_rnn_index_batch, device=device, dtype=torch.long)
-        else:
-            dilated_indices = sequence_dilated_rnn_index_batch.to(device=device, dtype=torch.long)
-
-        items = self.item_emb(item_vectors)
-        x = items.transpose(0, 1)
-        batch_size = item_vectors.size(0)
-        h1 = torch.zeros(1, batch_size, self.hidden_units, device=device)
-        c1 = torch.zeros(1, batch_size, self.hidden_units, device=device)
-        out, (h1, c1) = self.lstmcell(x, (h1, c1))
-        base_out = out.transpose(0, 1)
-
-        mask_bool = mask_tensor > 0.0
-        dilated_states = self._compute_dilated_states(items, dilated_indices, mask_bool)
-        history_context = self._compute_history_context(
-            user_vectors,
-            session_ids,
-            sequence_tim_tensor,
-            item_vectors,
-            mask_bool,
-            base_out,
-            is_train,
-            poi_distance_matrix,
-        )
-
-        out_hie = F.selu(dilated_states)
-        out_base = F.selu(base_out)
-        combined = (out_base + out_hie) * 0.5
-        history_act = F.selu(history_context)
-        logits_input = torch.cat([history_act, combined], dim=2)
-        logits = self.linear(logits_input)
-        return F.log_softmax(logits, dim=-1)
-
-    def _forward_legacy(self, user_vectors, item_vectors, mask_batch_ix_non_local, session_id_batch, sequence_tim_batch, is_train, poi_distance_matrix, sequence_dilated_rnn_index_batch):
         batch_size = item_vectors.size()[0]
         sequence_size = item_vectors.size()[1]
         items = self.item_emb(item_vectors)
@@ -738,17 +400,14 @@ def generate_queue(train_idx, mode, mode2):
 def create_dilated_rnn_input(session_sequence_current, poi_distance_matrix):
     sequence_length = len(session_sequence_current)
     session_sequence_current.reverse()
-    # -1 means “no parent”, safe for step t=0
-    session_dilated_rnn_input_index = [-1] * sequence_length
+    session_dilated_rnn_input_index = [0] * sequence_length
     for i in range(sequence_length - 1):
         current_poi = [session_sequence_current[i]]
         poi_before = session_sequence_current[i + 1 :]
         distance_row = poi_distance_matrix[current_poi]
         distance_row_explicit = distance_row[:, poi_before][0]
         index_closet = np.argmin(distance_row_explicit)
-        parent_idx = sequence_length - 2 - index_closet - i  # points to a prior step
-        # store, actual safety clamp happens in forward
-        session_dilated_rnn_input_index[sequence_length - i - 1] = int(parent_idx)
+        session_dilated_rnn_input_index[sequence_length - i - 1] = sequence_length-2-index_closet-i
     session_sequence_current.reverse()
     return session_dilated_rnn_input_index
 
@@ -802,19 +461,7 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
             mask_batch_ix = torch.FloatTensor(np.array(mask_batch_ix)).to(device)
             mask_batch_ix_non_local = torch.FloatTensor(np.array(mask_batch_ix_non_local)).to(device)
             user_id_batch = torch.LongTensor(np.array(user_id_batch)).to(device)
-            padded_tim_batch = torch.LongTensor(np.array(pad_batch_of_lists(sequence_tim_batch, max_len, pad_value=0))).to(device)
-            padded_dilated_batch = torch.LongTensor(np.array(pad_batch_of_lists(sequence_dilated_rnn_index_batch, max_len, pad_value=-1))).to(device)
-            session_id_tensor = torch.LongTensor(np.array(session_id_batch)).to(device)
-            logp_seq = network(
-                user_id_batch,
-                padded_sequence_batch,
-                mask_batch_ix_non_local,
-                session_id_tensor,
-                padded_tim_batch,
-                True,
-                poi_distance_matrix,
-                padded_dilated_batch,
-            )
+            logp_seq = network(user_id_batch, padded_sequence_batch, mask_batch_ix_non_local, session_id_batch, sequence_tim_batch, True, poi_distance_matrix, sequence_dilated_rnn_index_batch)
             predictions_logp = logp_seq[:, :-1] * mask_batch_ix[:, :-1, None]
             actual_next_tokens = padded_sequence_batch[:, 1:]
             logp_next = torch.gather(predictions_logp, dim=2, index=actual_next_tokens[:, :, None])
@@ -935,19 +582,7 @@ def evaluate_loss(network, batch_size=2):
             mask_batch_ix = torch.FloatTensor(np.array(mask_batch_ix)).to(device)
             mask_batch_ix_non_local = torch.FloatTensor(np.array(mask_batch_ix_non_local)).to(device)
             user_id_batch = torch.LongTensor(np.array(user_id_batch)).to(device)
-            padded_tim_batch = torch.LongTensor(np.array(pad_batch_of_lists(sequence_tim_batch, max_len, pad_value=0))).to(device)
-            padded_dilated_batch = torch.LongTensor(np.array(pad_batch_of_lists(sequence_dilated_rnn_index_batch, max_len, pad_value=-1))).to(device)
-            session_id_tensor = torch.LongTensor(np.array(session_id_batch)).to(device)
-            logp_seq = network(
-                user_id_batch,
-                padded_sequence_batch,
-                mask_batch_ix_non_local,
-                session_id_tensor,
-                padded_tim_batch,
-                False,
-                poi_distance_matrix,
-                padded_dilated_batch,
-            )
+            logp_seq = network(user_id_batch, padded_sequence_batch, mask_batch_ix_non_local, session_id_batch, sequence_tim_batch, False, poi_distance_matrix, sequence_dilated_rnn_index_batch)
             predictions_logp = logp_seq[:, :-1] * mask_batch_ix[:, :-1, None]
             actual_next_tokens = padded_sequence_batch[:, 1:]
             logp_next = torch.gather(predictions_logp, dim=2, index=actual_next_tokens[:, :, None])
@@ -981,20 +616,8 @@ def evaluate(network, batch_size = 2):
             padded_sequence_batch = torch.LongTensor(np.array(padded_sequence_batch)).to(device)
             mask_batch_ix = torch.FloatTensor(np.array(mask_batch_ix)).to(device)
             mask_batch_ix_non_local = torch.FloatTensor(np.array(mask_batch_ix_non_local)).to(device)
-            user_id_batch_tensor = torch.LongTensor(np.array(user_id_batch)).to(device)
-            padded_tim_batch = torch.LongTensor(np.array(pad_batch_of_lists(sequence_tim_batch, max_len, pad_value=0))).to(device)
-            padded_dilated_batch = torch.LongTensor(np.array(pad_batch_of_lists(sequence_dilated_rnn_index_batch, max_len, pad_value=-1))).to(device)
-            session_id_tensor = torch.LongTensor(np.array(session_id_batch)).to(device)
-            logp_seq = network(
-                user_id_batch_tensor,
-                padded_sequence_batch,
-                mask_batch_ix_non_local,
-                session_id_tensor,
-                padded_tim_batch,
-                False,
-                poi_distance_matrix,
-                padded_dilated_batch,
-            )
+            user_id_batch = torch.LongTensor(np.array(user_id_batch)).to(device)
+            logp_seq = network(user_id_batch, padded_sequence_batch, mask_batch_ix_non_local, session_id_batch, sequence_tim_batch, False, poi_distance_matrix, sequence_dilated_rnn_index_batch)
             predictions_logp = logp_seq[:, :-1] * mask_batch_ix[:, :-1, None]
             actual_next_tokens = padded_sequence_batch[:, 1:]
             batch_n = predictions_logp.shape[0]

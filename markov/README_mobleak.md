@@ -79,7 +79,7 @@ python3 markov/test.py --model run_markov/model.json --data_dir path/to/eval_dir
 Run `markov/extract.py` to convert Markov predictions into rank-based extraction difficulty scores for each trajectory.
 
 ```bash
-python3 markov/extract.py --model run0/model.json --data_dir path/to/eval_dir --prefix_lengths 0 3 5 --output run0/extraction
+python3 markov/extract.py --model run0/model.json --data_dir path/to/eval_dir --prefix_lengths 0 3 5 --alpha 0.5 --output run0/extraction
 ```
 
 - Works with DeepMove `.pk` files (`--data_pk`) or raw CSVs (`--data_csv`), or processes an entire directory with `--data_dir`.

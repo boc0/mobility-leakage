@@ -2,7 +2,6 @@ import os
 import argparse
 import pickle
 from typing import List
-from collections import defaultdict
 
 import numpy as np
 import torch
@@ -84,8 +83,7 @@ def ensure_directory(path: str):
         os.makedirs(directory, exist_ok=True)
 
 
-def process_file(pk_path, output_path, state_dict, n_items_ckpt, n_users_ckpt, device,
-                 prefix_lengths, steps, batch_size, distance_override):
+def process_file(pk_path, output_path, state_dict, n_items_ckpt, n_users_ckpt, device, prefix_lengths, steps, distance_override):
     vid_list, uid_list, data_neural, poi_coordinate = load_data(pk_path)
     n_users = len(uid_list)
 
@@ -133,114 +131,66 @@ def process_file(pk_path, output_path, state_dict, n_items_ckpt, n_users_ckpt, d
     header = ",".join(f"prefix-{p}" for p in prefix_lengths)
 
     ensure_directory(output_path)
-    batch_size = max(int(batch_size), 1)
 
-    samples = []
-    user_order = []
-    for u_idx in sorted(data_neural.keys()):
-        label = idx_to_user.get(u_idx, str(u_idx))
-        if label not in user_order:
-            user_order.append(label)
-        sessions = data_neural[u_idx]['sessions']
-        for sid in sorted(sessions.keys()):
-            seq = [p[0] for p in sessions[sid]]
-            if len(seq) < 2:
-                continue
-            tim = [lstpm_train.to_tid48(p[1]) for p in sessions[sid]]
-            seq_dil = lstpm_train.create_dilated_rnn_input(list(seq), poi_distance_matrix)
-            samples.append({
-                'user_idx': u_idx,
-                'label': label,
-                'session_id': sid,
-                'seq': seq,
-                'tim': tim,
-                'seq_dil': seq_dil,
-            })
+    trajectories = []
+    max_len = 0
 
-    if not samples:
-        with open(output_path, 'w') as out_f:
-            out_f.write(f"tid,{header}\n")
-        return 0
-
-    user_ranks = defaultdict(list)
-
-    total_batches = (len(samples) + batch_size - 1) // batch_size
     with torch.no_grad():
-        for start in tqdm(range(0, len(samples), batch_size), total=total_batches,
-                          desc=os.path.basename(pk_path)):
-            batch = samples[start:start + batch_size]
-            seqs = [s['seq'] for s in batch]
-            lengths = [len(seq) for seq in seqs]
-            max_len_batch = max(lengths)
+        for u_idx in tqdm(sorted(data_neural.keys())):
+            label = idx_to_user.get(u_idx, str(u_idx))
+            sessions = data_neural[u_idx]['sessions']
+            ranks_all = []
 
-            padded_seq, _, mask_non_local = lstpm_train.pad_batch_of_lists_masks(seqs, max_len_batch)
-            padded_seq_t = torch.LongTensor(padded_seq).to(device)
-            mask_non_local_t = torch.FloatTensor(mask_non_local).to(device)
-            user_tensor = torch.LongTensor([s['user_idx'] for s in batch]).to(device)
-
-            session_ids = [s['session_id'] for s in batch]
-            tim_lists = [s['tim'] for s in batch]
-            seq_dil_batch = [s['seq_dil'] for s in batch]
-
-            padded_tim_t = torch.LongTensor(lstpm_train.pad_batch_of_lists(tim_lists, max_len_batch, pad_value=0)).to(device)
-            padded_dilated_t = torch.LongTensor(lstpm_train.pad_batch_of_lists(seq_dil_batch, max_len_batch, pad_value=-1)).to(device)
-            session_tensor = torch.LongTensor(session_ids).to(device)
-
-            logp_seq = model(
-                user_tensor,
-                padded_seq_t,
-                mask_non_local_t,
-                session_tensor,
-                padded_tim_t,
-                False,
-                poi_distance_matrix,
-                padded_dilated_t,
-            )
-            if logp_seq.dim() == 2:
-                logp_seq = logp_seq.unsqueeze(0)
-            predictions_logp = logp_seq[:, :-1, :]
-            targets_full = padded_seq_t[:, 1:]
-
-            for idx, sample in enumerate(batch):
-                tgt_len = lengths[idx] - 1
-                if tgt_len <= 0:
+            for sid in sorted(sessions.keys()):
+                seq = [p[0] for p in sessions[sid]]
+                if len(seq) < 2:
                     continue
-                preds = predictions_logp[idx, :tgt_len, :]
-                tgt = targets_full[idx, :tgt_len]
-                target_scores = preds.gather(1, tgt.unsqueeze(1))
-                ranks = (preds > target_scores).sum(dim=1) + 1
-                ranks_list = ranks.detach().cpu().tolist()
+                tim = [lstpm_train.to_tid48(p[1]) for p in sessions[sid]]
+                seq_dil = lstpm_train.create_dilated_rnn_input(list(seq), poi_distance_matrix)
+                max_len_session = len(seq)
+                padded_seq, _, mask_non_local = lstpm_train.pad_batch_of_lists_masks([seq], max_len_session)
+                padded_seq_t = torch.LongTensor(np.array(padded_seq)).to(device)
+                mask_non_local_t = torch.FloatTensor(np.array(mask_non_local)).to(device)
+                user_t = torch.LongTensor(np.array([u_idx])).to(device)
 
-                if step_limit is not None:
-                    remaining = step_limit - len(user_ranks[sample['label']])
-                    if remaining <= 0:
-                        continue
-                    ranks_list = ranks_list[:remaining]
-
-                if not ranks_list:
+                logp_seq = model(user_t, padded_seq_t, mask_non_local_t, [sid], [tim], False, poi_distance_matrix, [seq_dil])
+                predictions_logp = logp_seq[:, :-1].squeeze(0)
+                if predictions_logp.dim() == 1:
+                    predictions_logp = predictions_logp.unsqueeze(0)
+                targets = padded_seq_t[:, 1:].squeeze(0)
+                target_len = len(seq) - 1
+                predictions_logp = predictions_logp[:target_len]
+                targets = targets[:target_len]
+                if target_len <= 0 or predictions_logp.size(0) == 0:
                     continue
 
-                user_ranks[sample['label']].extend(ranks_list)
+                target_scores = predictions_logp.gather(1, targets.unsqueeze(1))
+                ranks = (predictions_logp > target_scores).sum(dim=1) + 1
+                ranks_all.extend(ranks.detach().cpu().tolist())
 
-    valid_entries = [(label, user_ranks[label]) for label in user_order if user_ranks[label]]
+            if not ranks_all:
+                continue
+            if step_limit is not None:
+                ranks_all = ranks_all[:step_limit]
+            trajectories.append({'label': label, 'ranks': ranks_all})
+            if len(ranks_all) > max_len:
+                max_len = len(ranks_all)
 
-    if not valid_entries:
+    if not trajectories:
         with open(output_path, 'w') as out_f:
             out_f.write(f"tid,{header}\n")
         return 0
-
-    max_len = max(len(ranks) for _, ranks in valid_entries)
 
     with open(output_path, 'w') as out_f:
         out_f.write(f"tid,{header}\n")
-        for label, ranks in valid_entries:
+        for entry in trajectories:
             proxies = [
-                str(trajectory_rank_proxy(ranks, n_items_ckpt, max_len, prefix_len=p))
+                str(trajectory_rank_proxy(entry['ranks'], n_items_ckpt, max_len, prefix_len=p))
                 for p in prefix_lengths
             ]
-            out_f.write(f"{label},{','.join(proxies)}\n")
+            out_f.write(f"{entry['label']},{','.join(proxies)}\n")
 
-    return len(valid_entries)
+    return len(trajectories)
 
 
 def main():
@@ -253,8 +203,6 @@ def main():
     parser.add_argument('--steps', type=int, default=None, help='Maximum number of ranks to keep per trajectory')
     parser.add_argument('--prefix_lengths', '--prefix_lens', type=int, nargs='+', default=[0],
                         help='List of prefix lengths for rank proxy computation (non-negative integers)')
-    parser.add_argument('--batch_size', type=int, default=256,
-                        help='Batch size for parallel processing of sessions')
     args = parser.parse_args()
 
     if not args.data_pk and not args.data_dir:
@@ -299,7 +247,6 @@ def main():
                 device,
                 args.prefix_lengths,
                 args.steps,
-                args.batch_size,
                 args.distance,
             )
             if processed == 0:
@@ -314,7 +261,6 @@ def main():
             device,
             args.prefix_lengths,
             args.steps,
-            args.batch_size,
             args.distance,
         )
         if processed == 0:
