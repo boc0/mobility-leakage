@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobleak"
+version = "0.1.0"
+description = "Utilities and experiments for mobility leakage research"
+requires-python = ">=3.9"
+authors = [{ name = "Hristo Boyadzhiev" }]
+license = { file = "DeepMove/LICENSE" }
+keywords = ["mobility", "trajectory", "privacy"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "luigi>=3.6.0",
+    "torch==2.6.0",
+    "networkx==3.4.2",
+    "pandas==2.2.3",
+    "numpy==2.3.3",
+    "geopandas==1.0.1",
+    "tqdm==4.67.1",
+    "scikit-learn",
+    "jupyter",
+    "matplotlib",
+    "seaborn",
+    "joypy"
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+include = ["DeepMove*"]
+
+[tool.setuptools.package-data]
+"DeepMove" = ["data/**/*", "results/**/*"]
