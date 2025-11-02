@@ -11,7 +11,10 @@ LSTPM/train/data/*
 *.json
 *.zip
 results/*
+runs/*
 *venv*
 *.sif
 analysis_outputs/*
 Graph-Flashback/*
+*.patch
+mobleak.egg-info/*
