@@ -88,8 +88,19 @@ Both `test.py` and `perplexity.py` can be run a single file too, by replacing th
 Use `DeepMove/codes/extract.py` to turn model predictions into rank-based extraction difficulty scores for each trajectory.
 
 ```bash
-python3 DeepMove/codes/extract.py --metadata_json run0/metadata.json --model_mode simple --model_path run0/training/res.m --data_dir run0/preprocessed --prefix_lengths 0 3 5 --batch_size 64 --output run0/extraction
+python3 DeepMove/codes/extract.py --metadata_json run0/metadata.json --model_mode <model_type> --model_path run0/training/res.m --data_dir run0/preprocessed --prefix_lengths 0 3 5 --batch_size 64 --output run0/extraction
 ```
 
 - Accepts either a single `.pk` via `--data_pk` (with `--output` as the destination file) or a directory with `--data_dir` (writes one CSV per input).
 - Each output row contains the trajectory id and proxy columns `prefix-<N>` encoding ranks after truncating the history to that prefix length.
+
+### Difficulty of inferring work location from home location
+
+To evaluate the usefulness of a model to an attacker trying to infer work locations from home locations use the `DeepMove/codes/infer_work.py`
+
+```bash
+python3 DeepMove/codes/infer_work.py --metadata_json run0/metadata.json --model_mode <model_type> --model_path run0/training/res.m --data_dir run0/preprocessed --output run0/infer_work --beam_width 10
+```
+
+where `--beam_width` is the width of the beam search used during the work location attack and `<model_type>` is again one of `simple`, `simple_long`, `attn_avg_long_user`, or `attn_local_long`.
+The resulting files will have columns `tid`, `avg_work_rank` and `vocab_size`, indicating for each trajectory the average rank of the true work location when predicting from the home location, and the number of possible locations in the dataset.
