@@ -237,16 +237,23 @@ def attack_single_user(
     trajectory: Sequence[Tuple[int, int]],
     beam_width: int,
     tim_size: int,
-    beam_steps: int = 8,
-    greedy_steps: int = 18,
+    home_start: int = 0,
+    home_end: int = 6,
+    work_start: int = 10,
+    work_end: int = 18,
 ) -> float:
     if len(trajectory) < 2:
         raise ValueError("Trajectory too short for attack")
 
-    work_loc = infer_location_from_slots(trajectory, start_hour=10, end_hour=18, weekdays_only=True)
-    prefix_loc, prefix_tim = extract_prefix(trajectory, cutoff_hour=6)
+    # Compute beam_steps (commute) and greedy_steps (work period)
+    # Trajectory points are every 30 minutes = 2 per hour
+    beam_steps = (work_start - home_end) * 2
+    greedy_steps = (work_end - work_start) * 2
+
+    work_loc = infer_location_from_slots(trajectory, start_hour=work_start, end_hour=work_end, weekdays_only=True)
+    prefix_loc, prefix_tim = extract_prefix(trajectory, cutoff_hour=home_end)
     if not prefix_loc or not prefix_tim:
-        raise ValueError("Prefix before 6am is empty")
+        raise ValueError(f"Prefix before {home_end}am is empty")
 
     beam_paths = deepmove_beam_search(
         model=model,
@@ -286,6 +293,10 @@ def evaluate_attack(
     model_mode: str,
     beam_width: int,
     max_users: Optional[int],
+    home_start: int = 0,
+    home_end: int = 6,
+    work_start: int = 10,
+    work_end: int = 18,
 ) -> Tuple[pd.DataFrame, int]:
     if not os.path.exists(data_pk):
         raise FileNotFoundError(f".pk file not found: {data_pk}")
@@ -367,6 +378,10 @@ def evaluate_attack(
                 trajectory=filtered_traj,
                 beam_width=beam_width,
                 tim_size=params.tim_size,
+                home_start=home_start,
+                home_end=home_end,
+                work_start=work_start,
+                work_end=work_end,
             )
         except ValueError:
             continue
@@ -395,10 +410,20 @@ def main() -> None:
     parser.add_argument("--beam_width", type=int, default=5, help="Beam width for the attack search")
     parser.add_argument("--max_users", type=int, default=None, help="Optional cap on number of users to evaluate")
     parser.add_argument("--output", default=None, help="Optional CSV output path for results")
+    parser.add_argument("--home_start", type=int, default=0, help="Hour when home period starts (must be 0)")
+    parser.add_argument("--home_end", type=int, default=6, help="Hour when home period ends (default: 6am)")
+    parser.add_argument("--work_start", type=int, default=10, help="Hour when work period starts (default: 10am)")
+    parser.add_argument("--work_end", type=int, default=18, help="Hour when work period ends (default: 6pm)")
     args = parser.parse_args()
 
     if bool(args.data_pk) == bool(args.data_dir):
         parser.error("Provide exactly one of --data_pk or --data_dir")
+
+    if args.home_start != 0:
+        parser.error("home_start must be 0 (non-zero home_start not yet implemented)")
+
+    if not (args.home_start < args.home_end <= args.work_start < args.work_end <= 24):
+        parser.error("Time periods must satisfy: home_start < home_end <= work_start < work_end <= 24")
 
     beam_width = max(1, args.beam_width)
 
@@ -428,6 +453,10 @@ def main() -> None:
                     model_mode=args.model_mode,
                     beam_width=beam_width,
                     max_users=args.max_users,
+                    home_start=args.home_start,
+                    home_end=args.home_end,
+                    work_start=args.work_start,
+                    work_end=args.work_end,
                 )
             except ValueError as err:
                 print(f"  Skipping {pk_file}: {err}")
@@ -451,6 +480,10 @@ def main() -> None:
         model_mode=args.model_mode,
         beam_width=beam_width,
         max_users=args.max_users,
+        home_start=args.home_start,
+        home_end=args.home_end,
+        work_start=args.work_start,
+        work_end=args.work_end,
     )
     df = df[["user_id", "avg_work_rank"]]
     df['max_rank'] = vocab_size

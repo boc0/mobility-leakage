@@ -17,21 +17,34 @@ pip install -r DeepMove/requirements.txt
 
 ## Data preprocessing
 
-Data files are sets of trajectories represented as one single series of points containing latitude ('lat'), longitude ('lon'), timestamp ('ts'). The individual trajectories are then identified using a fourth trajectory id ('tid') column, with each trajectory appearing in the dataset contiguously. All training and testing data should be in this format, with the entire training dataset in one file. Example file:
+Data files are sets of trajectories represented as one single series of points containing latitude ('lat'), longitude ('lon') and timestamp. The individual trajectories are then identified using a fourth trajectory id ('tid') column, with each trajectory appearing in the dataset contiguously. All training and testing data should be in this format, with the entire training dataset in one file. Example file:
 
 ```
-tid,lat,lon,timestamp
-126,40.799,-73.968,2025-07-05 00:00:00
-126,40.794,-73.971,2025-07-05 01:00:00
-126,40.833,-73.941,2025-07-05 02:00:00
-126,40.757,-73.914,2025-07-05 14:00:00
-126,40.749,-73.937,2025-07-05 17:00:00
-127,40.834,-73.945,2025-06-30 13:00:00
-127,40.567,-73.882,2025-06-30 19:00:00
-127,40.689,-73.981,2025-06-30 23:00:00
-127,40.708,-73.991,2025-06-30 23:00:00
-127,40.833,-73.941,2025-07-01 14:00:00
-127,40.708,-73.991,2025-07-01 17:00:00
+tid,timestamp,lat,lon
+44465568_44465664,1900-01-12 19:00:00,22.519514083862305,114.06694793701172
+44465568_44465664,1900-01-12 19:30:00,22.519514083862305,114.06694793701172
+44465568_44465664,1900-01-12 20:00:00,22.519514083862305,114.06694793701172
+44465568_44465664,1900-01-12 20:30:00,22.52284812927246,114.05638885498048
+44465568_44465664,1900-01-12 21:00:00,22.53062438964844,114.05791473388672
+44465568_44465664,1900-01-12 21:30:00,22.53062438964844,114.05791473388672
+44465568_44465664,1900-01-12 22:00:00,22.53062438964844,114.05791473388672
+44465568_44465664,1900-01-12 22:30:00,22.53062438964844,114.05791473388672
+44465568_44465664,1900-01-12 23:00:00,22.519514083862305,114.06694793701172
+44465568_44465664,1900-01-12 23:30:00,22.519514083862305,114.06694793701172
+14788944_14789040,1900-01-23 00:00:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 00:30:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 01:00:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 01:30:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 02:00:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 02:30:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 03:00:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 03:30:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 04:00:00,22.550416946411133,114.06881713867188
+14788944_14789040,1900-01-23 04:30:00,22.55180549621582,114.06485748291016
+14788944_14789040,1900-01-23 09:30:00,22.55180549621582,114.06485748291016
+14788944_14789040,1900-01-23 10:00:00,22.55180549621582,114.06485748291016
+14788944_14789040,1900-01-23 10:30:00,22.55180549621582,114.06485748291016
+14788944_14789040,1900-01-23 11:00:00,22.55180549621582,114.06485748291016
 ```
 
 Since the model predicts locations as classes, it needs to know the set of all possible locations, including all those contained in possible test data. Therefore, all the training and testing data should be preprocessed together. The following assumes a folder of data CSV files, with one of those intended as a training set with an appropriate name.
@@ -99,8 +112,14 @@ python3 DeepMove/codes/extract.py --metadata_json run0/metadata.json --model_mod
 To evaluate the usefulness of a model to an attacker trying to infer work locations from home locations use the `DeepMove/codes/infer_work.py`
 
 ```bash
-python3 DeepMove/codes/infer_work.py --metadata_json run0/metadata.json --model_mode <model_type> --model_path run0/training/res.m --data_dir run0/preprocessed --output run0/infer_work --beam_width 10
+python3 DeepMove/codes/infer_work.py --metadata_json run0/metadata.json --model_mode <model_type> --model_path run0/training/res.m --data_dir run0/preprocessed --output run0/infer_work --beam_width 10 --home_end 6 --work_start 10 --work_end 18
 ```
 
-where `--beam_width` is the width of the beam search used during the work location attack and `<model_type>` is again one of `simple`, `simple_long`, `attn_avg_long_user`, or `attn_local_long`.
+where:
+* `--beam_width` is the width of the beam search used during the work location attack
+* `--home_end` is the time of leaving home (in hours), also the start of the commute period
+* `--work_start` is the end (in hours) of the commute period
+* `--work_end` is the maximum time at the work location (in hours)
+
+* `<model_type>` is again one of `simple`, `simple_long`, `attn_avg_long_user`, or `attn_local_long`.
 The resulting files will have columns `tid`, `avg_work_rank` and `vocab_size`, indicating for each trajectory the average rank of the true work location when predicting from the home location, and the number of possible locations in the dataset.
