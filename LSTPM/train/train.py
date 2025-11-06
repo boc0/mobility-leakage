@@ -11,6 +11,7 @@ import os
 from math import radians, cos, sin, asin, sqrt
 from collections import deque,Counter
 import time
+from typing import Dict, Optional
 
 # auto-select device: MPS (for M1/M2) > CUDA > CPU
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
@@ -433,7 +434,17 @@ def generate_detailed_batch_data(one_train_batch):
     return user_id_batch, session_id_batch, sequence_batch, sequences_lens_batch, sequences_tim_batch, sequences_dilated_input_batch
 
 
-def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_dir: str = None, checkpoint_dir: str = "checkpoint", final_model_name: str = "res.m", patience: int = 5):
+def train_network(
+    network,
+    num_epoch=40,
+    batch_size=32,
+    criterion=None,
+    save_dir: str = None,
+    checkpoint_dir: str = "checkpoint",
+    final_model_name: str = "res.m",
+    patience: int = 5,
+    run_args: Optional[Dict[str, object]] = None,
+):
     candidate = data_neural.keys()
     data_train, train_idx = generate_input_history(data_neural, 'train', candidate=candidate)
     # checkpointing setup
@@ -444,6 +455,7 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
     best_acc = -1.0
     best_epoch = -1
     metrics_accuracy = []
+    metrics = {"train_loss": [], "valid_loss": [], "accuracy": []}
     
     # Early stopping variables
     best_valid_loss = float('inf')
@@ -452,6 +464,8 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
         network.train(True)
         i = 0
         run_queue = generate_queue(train_idx, 'random', 'train')
+        epoch_loss_sum = 0.0
+        epoch_batches = 0
         for one_train_batch in minibatch(run_queue, batch_size = batch_size):
             user_id_batch, session_id_batch, sequence_batch, sequences_lens_batch, sequence_tim_batch, sequence_dilated_rnn_index_batch = generate_detailed_batch_data(one_train_batch)
             max_len = max(sequences_lens_batch)
@@ -471,15 +485,20 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
             loss.backward()
             nn.utils.clip_grad_norm_(network.parameters(), 5.0)
             opt.step()
+            epoch_loss_sum += loss.item()
+            epoch_batches += 1
             if (i + 1) % 20 == 0:
                 print("epoch" + str(epoch) + ": loss: " + str(loss))
             i += 1
+        epoch_train_loss = epoch_loss_sum / epoch_batches if epoch_batches else float('nan')
+        metrics["train_loss"].append(epoch_train_loss)
         results = evaluate(network, 1)
         print("Scores: ", results)
         
         # Calculate validation loss for early stopping
         valid_loss = evaluate_loss(network, 1)
         print(f"Validation loss: {valid_loss:.4f}")
+        metrics["valid_loss"].append(valid_loss)
         
         # Save checkpoint for this epoch
         save_name_tmp = f'ep_{epoch}.m'
@@ -491,6 +510,7 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
         except Exception:
             acc_at1 = -1.0
         metrics_accuracy.append(acc_at1)
+        metrics["accuracy"].append(acc_at1)
         if acc_at1 > best_acc:
             best_acc = acc_at1
             best_epoch = epoch
@@ -529,6 +549,12 @@ def train_network(network, num_epoch=40 ,batch_size = 32,criterion = None, save_
             pass
         '''
 
+    if run_args is None:
+        run_args = {}
+    metrics_payload = {"args": run_args, "metrics": metrics}
+    metrics_path = os.path.join(save_dir, "res.txt")
+    with open(metrics_path, "w") as fh:
+        json.dump(metrics_payload, fh, indent=4)
 
 def get_acc(target, scores):
     target = target.data.cpu().numpy()
@@ -733,7 +759,18 @@ def cli_main():
 
     os.makedirs(args.save_dir, exist_ok=True)
     print(f"Training on users={n_users}, items={n_items}; saving to {args.save_dir}")
-    train_network(network, num_epoch=args.epochs, batch_size=args.batch_size, criterion=criterion, save_dir=args.save_dir, checkpoint_dir="checkpoint", final_model_name="res.m", patience=args.early_stopping)
+    run_args = dict(vars(args))
+    train_network(
+        network,
+        num_epoch=args.epochs,
+        batch_size=args.batch_size,
+        criterion=criterion,
+        save_dir=args.save_dir,
+        checkpoint_dir="checkpoint",
+        final_model_name="res.m",
+        patience=args.early_stopping,
+        run_args=run_args,
+    )
 
 
 if __name__ == '__main__':
