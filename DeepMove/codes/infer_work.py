@@ -192,9 +192,9 @@ def rank_target_location(
     order = list(range(len(probs)))
     order.sort(key=lambda idx: (-probs[idx], idx))
     try:
-        return order.index(int(target_loc))
+        return order.index(int(target_loc)) + 1
     except ValueError:
-        return len(order) - 1
+        return len(order)
 
 
 def greedy_rollout_ranks(
@@ -433,8 +433,8 @@ def main() -> None:
                 print(f"  Skipping {pk_file}: {err}")
                 continue
 
-            df["vocab_size"] = vocab_size
-            df = df[["user_id", "avg_work_rank", "vocab_size"]]
+            df = df[["user_id", "avg_work_rank"]]
+            df['max_rank'] = vocab_size
             mean_rank = df["avg_work_rank"].mean()
             basename = os.path.splitext(os.path.basename(pk_file))[0]
             out_path = os.path.join(output_dir, f"{basename}_attack.csv")
@@ -444,7 +444,7 @@ def main() -> None:
         return
 
     # Single file mode
-    df, _ = evaluate_attack(
+    df, vocab_size = evaluate_attack(
         data_pk=args.data_pk,
         model_path=args.model_path,
         metadata_json=args.metadata_json,
@@ -452,7 +452,8 @@ def main() -> None:
         beam_width=beam_width,
         max_users=args.max_users,
     )
-
+    df = df[["user_id", "avg_work_rank"]]
+    df['max_rank'] = vocab_size
     mean_rank = df["avg_work_rank"].mean()
     print(f"\n✓ Evaluated {len(df)} users. Mean rank: {mean_rank:.2f}")
 
