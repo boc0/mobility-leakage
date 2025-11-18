@@ -15,6 +15,9 @@ runs/*
 *venv*
 *.sif
 analysis_outputs/*
-Graph-Flashback/*
+Graph-Flashback/data
+Graph-Flashback/dataset*
+Graph-Flashback/.idea/*
+Graph-Flashback/.vscode/*
 *.patch
 mobleak.egg-info/*
