@@ -364,6 +364,9 @@ def preprocess_directory(in_dir: str, out_dir: str, user_mode: str = 'tid_prefix
 			print(f'Per-file graphs written for {pf_base}')
 	except Exception as e:
 		print(f'[Warn] Failed to build per-file graphs: {e}')
+	# delete union file
+	# if os.path.exists(union_path):
+	# 	os.remove(union_path)
 
 def cli():
 	parser = argparse.ArgumentParser(description='Graph-Flashback preprocess: CSV -> raw TXT + metadata.json')
