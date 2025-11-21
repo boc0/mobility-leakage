@@ -37,9 +37,11 @@ def evaluate_perplexity(args, data_file, device, users_original):
     # Low min_checkins to include all users
     poi_loader = PoiDataloader(max_users=0, min_checkins=1)
     poi_loader.read(data_file)
+    # Cap batch size by number of available users in this file
+    eval_batch_size = min(args.batch_size, poi_loader.user_count()) if poi_loader.user_count() > 0 else 1
     dataset_test = poi_loader.create_dataset(
         sequence_length=args.sequence_length,
-        batch_size=args.batch_size,
+        batch_size=eval_batch_size,
         split=Split.TEST
     )
     dataloader_test = DataLoader(dataset_test, batch_size=1, shuffle=False)
@@ -87,7 +89,7 @@ def evaluate_perplexity(args, data_file, device, users_original):
 
     h0_strategy = create_h0_strategy(hidden_dim, is_lstm)
     dataset_test.reset()
-    h = h0_strategy.on_init(args.batch_size, device)
+    h = h0_strategy.on_init(eval_batch_size, device)
 
     # Accumulators per local user index
     nll_sum = np.zeros(poi_loader.user_count(), dtype=np.float64)
@@ -122,7 +124,7 @@ def evaluate_perplexity(args, data_file, device, users_original):
 
             out, h = trainer.evaluate(x, t, t_slot, s, y_t, y_t_slot, y_s, h, active_users)
             # out shape: (batch, seq_len, loc_count)
-            batch_size = args.batch_size
+            batch_size = eval_batch_size
             for j in range(batch_size):
                 u_local = int(active_users[j].item())
                 if reset_count[u_local] > 1:  # already processed full sequence once

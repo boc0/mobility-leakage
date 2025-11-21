@@ -36,9 +36,11 @@ def evaluate_file(args, data_file, device, users_original):
     # Use a low min_checkins to ensure all users present in the TXT are evaluated
     poi_loader = PoiDataloader(max_users=0, min_checkins=1)
     poi_loader.read(data_file)
+    # Cap batch size by number of available users in this file
+    eval_batch_size = min(args.batch_size, poi_loader.user_count()) if poi_loader.user_count() > 0 else 1
     dataset_test = poi_loader.create_dataset(
         sequence_length=args.sequence_length,
-        batch_size=args.batch_size,
+        batch_size=eval_batch_size,
         split=Split.TEST
     )
     dataloader_test = DataLoader(dataset_test, batch_size=1, shuffle=False)
@@ -93,7 +95,7 @@ def evaluate_file(args, data_file, device, users_original):
     # Inference loop mirrors Evaluation but collects per-user results
     h0_strategy = create_h0_strategy(hidden_dim, is_lstm)
     dataset_test.reset()
-    h = h0_strategy.on_init(args.batch_size, device)
+    h = h0_strategy.on_init(eval_batch_size, device)
 
     # Accumulators
     reset_count = torch.zeros(poi_loader.user_count())
