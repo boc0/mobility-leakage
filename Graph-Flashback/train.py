@@ -216,9 +216,9 @@ for e in range(setting.epochs):  # 100
 
     # save checkpoint at the end of each epoch
     checkpoint_epoch_path = os.path.join(
-        setting.save_dir, f'flashback_{timestring}_epoch{e + 1}.pt')
+        setting.save_dir, f'flashback_epoch{e + 1}.pt')
     checkpoint_latest_path = os.path.join(
-        setting.save_dir, f'flashback_{timestring}_latest.pt')
+        setting.save_dir, f'flashback_latest.pt')
     torch.save({
         'epoch': e + 1,
         'model_state_dict': trainer.model.state_dict(),
