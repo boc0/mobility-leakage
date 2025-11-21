@@ -35,8 +35,7 @@ Example:
 ```bash
 python3 Graph-Flashback/preprocess.py \
   --in_dir path/to/csv_dir \
-  --out_dir results/flashback/preprocessed \
-  --user_mode tid_full
+  --out_dir results/flashback/preprocessed
 ```
 
 Outputs inside `out_dir`:

@@ -16,7 +16,7 @@ runs/*
 *.sif
 analysis_outputs/*
 Graph-Flashback/data
-Graph-Flashback/dataset*
+Graph-Flashback/dataset/*
 Graph-Flashback/.idea/*
 Graph-Flashback/.vscode/*
 *.patch
