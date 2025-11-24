@@ -219,7 +219,8 @@ class PoiDataset(Dataset):
             return self.min_seq_count * (len(self.users) // self.batch_size)
         if self.usage == Usage.MAX_SEQ_LENGTH:
             # estimated capacity:
-            estimated = self.capacity // self.batch_size
+            # Use ceiling division to include the last partial batch
+            estimated = (self.capacity + self.batch_size - 1) // self.batch_size
             return max(self.max_seq_count, estimated)
         if self.usage == Usage.CUSTOM:
             return self.custom_seq_count * (len(self.users) // self.batch_size)
