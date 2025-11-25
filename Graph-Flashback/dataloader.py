@@ -89,6 +89,10 @@ class PoiDataloader():
                 visit_cnt = 1
                 if 0 < self.max_users <= len(self.user2id):
                     break  # restrict to max users
+        
+        # Process the last user after the loop finishes
+        if visit_cnt >= self.min_checkins and (self.max_users <= 0 or len(self.user2id) < self.max_users):
+            self.user2id[prev_user] = len(self.user2id)
 
     def read_pois(self, file):
         f = open(file, 'r')
