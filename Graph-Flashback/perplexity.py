@@ -124,8 +124,7 @@ def evaluate_perplexity(args, data_file, device, users_original):
 
             out, h = trainer.evaluate(x, t, t_slot, s, y_t, y_t_slot, y_s, h, active_users)
             # out shape: (batch, seq_len, loc_count)
-            batch_size = eval_batch_size
-            for j in range(batch_size):
+            for j in range(active_users.size(0)):
                 u_local = int(active_users[j].item())
                 if reset_count[u_local] > 1:  # already processed full sequence once
                     continue

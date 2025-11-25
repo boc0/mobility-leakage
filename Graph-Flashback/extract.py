@@ -121,8 +121,7 @@ def evaluate_difficulty(args, data_file, device, users_original):
 
             out, h = trainer.evaluate(x, t, t_slot, s, y_t, y_t_slot, y_s, h, active_users)
 
-            batch_size = eval_batch_size
-            for j in range(batch_size):
+            for j in range(active_users.size(0)):
                 u_local = int(active_users[j].item())
                 if reset_count[u_local] > 1:
                     continue  # already done once
@@ -152,6 +151,7 @@ def evaluate_difficulty(args, data_file, device, users_original):
             if ranks:
                 results_global[g_uid][p] = float(np.mean(ranks))
             else:
+                print(ranks)
                 results_global[g_uid][p] = None
 
     # Add users missing due to filtering

@@ -132,8 +132,7 @@ def evaluate_file(args, data_file, device, users_original):
             out, h = trainer.evaluate(x, t, t_slot, s, y_t, y_t_slot, y_s, h, active_users)
 
             # iterate users in the active batch
-            batch_size = args.batch_size
-            for j in range(batch_size):
+            for j in range(active_users.size(0)):
                 u = int(active_users[j].item())
                 if reset_count[u] > 1:
                     continue  # already evaluated fully once
