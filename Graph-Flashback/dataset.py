@@ -128,7 +128,7 @@ class PoiDataset(Dataset):
         for i, (time, time_slot, coord, loc, label, lbl_time, lbl_time_slot, lbl_coord) in enumerate(
                 zip(self.times, self.time_slots, self.coords, self.locs, self.labels, self.lbl_times,
                     self.lbl_time_slots, self.lbl_coords)):
-            train_thr = int(len(loc) * 0.8)
+            train_thr = int(len(loc) * 0.66)
             if split == Split.TRAIN:
                 self.locs[i] = loc[:train_thr]
                 self.times[i] = time[:train_thr]

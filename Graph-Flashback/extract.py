@@ -192,7 +192,7 @@ def main():
     parser.add_argument('--use_graph_user', action='store_true', default=False)
     parser.add_argument('--output_dir', type=str, required=True, help='directory to save CSV results')
     parser.add_argument('--prefix_lengths', type=int, nargs='+', default=[0, 3, 5], help='prefix lengths for difficulty columns')
-    parser.add_argument('--sequence_length', type=int, default=20, help='sequence length used to build dataset')
+    parser.add_argument('--sequence_length', type=int, default=48, help='sequence length used to build dataset')
     parser.add_argument('--batch_size', type=int, default=200, help='internal user batch size')
     parser.add_argument('--hidden_dim', type=int, default=10, help='hidden dimension (fallback if not in checkpoint)')
     parser.add_argument('--gpu', type=int, default=0, help='GPU id to use; -1 for CPU')

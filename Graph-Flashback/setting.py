@@ -37,7 +37,7 @@ class Setting:
         self.dataset_file = args.dataset
         self.friend_file = './data/{}'.format(args.friendship)
         self.max_users = 0  # 0 = use all available users
-        self.sequence_length = 20  # 将用户的所有check-in轨迹划分成固定长度为20的多个子轨迹
+        self.sequence_length = 48  # 将用户的所有check-in轨迹划分成固定长度为20的多个子轨迹
         self.batch_size = args.batch_size
         self.min_checkins = 101
 
@@ -80,7 +80,7 @@ class Setting:
         parser.add_argument('--friendship', default='gowalla_friend.txt', type=str,
                             help='the friendship file under ../data/<edges.txt> to load')
         # evaluation        
-        parser.add_argument('--validate-epoch', default=2, type=int,
+        parser.add_argument('--validate-epoch', default=1, type=int,
                             help='run each validation after this amount of epochs')
         parser.add_argument('--report-user', default=-1, type=int,
                             help='report every x user on evaluation (-1: ignore)')
