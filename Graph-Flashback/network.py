@@ -89,9 +89,9 @@ class Flashback(nn.Module):
             input_size, hidden_size)  # location embedding
         # self.time_encoder = nn.Embedding(24 * 7, hidden_size)  # time embedding
         self.user_encoder = nn.Embedding(
-            user_count, hidden_size)  # user embedding
+            user_count, 10)  # user embedding
         self.rnn = rnn_factory.create(hidden_size) 
-        self.fc = nn.Linear(2 * hidden_size, input_size)
+        self.fc = nn.Linear(hidden_size + 10, input_size)
 
     def forward(self, x, t, t_slot, s, y_t, y_t_slot, y_s, h, active_user):
         seq_len, user_len = x.size()
@@ -116,12 +116,10 @@ class Flashback(nn.Module):
             p_u = torch.index_select(
                 user_encoder_weight, 0, active_user.squeeze())
         else:
-            p_u = self.user_encoder(active_user)  # (1, user_len, hidden_size)
-            # (user_len, hidden_size)
-            p_u = p_u.view(user_len, self.hidden_size)
+            p_u = self.user_encoder(active_user)  # (1, user_len, 10)
+            # (user_len, 10)
+            p_u = p_u.view(user_len, 10)
 
-        p_u = self.user_encoder(active_user)  # (1, user_len, hidden_size)
-        p_u = p_u.view(user_len, self.hidden_size)
         # AX,即GCN
         graph = self.graph.to(x.device)
         loc_emb = self.encoder(torch.LongTensor(
@@ -181,10 +179,10 @@ class Flashback(nn.Module):
                 out_w[i] += w_j * out[j]  # (user_len, hidden_size)
             out_w[i] /= sum_w
             
-        out_pu = torch.zeros(seq_len, user_len, 2 *
-                             self.hidden_size, device=x.device)
+        out_pu = torch.zeros(seq_len, user_len,
+                             self.hidden_size + 10, device=x.device)
         for i in range(seq_len):
-            # (user_len, hidden_size * 2)
+            # (user_len, hidden_size + 10)
             out_pu[i] = torch.cat([out_w[i], p_u], dim=1)
 
         y_linear = self.fc(out_pu)  # (seq_len, user_len, loc_count)
