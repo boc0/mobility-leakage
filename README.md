@@ -20,3 +20,5 @@ the code to train and evaluate that model, with the corresponding usage instruct
 - `markov/`
     - `USAGE.md`
     - scripts
+- `computation.py`          # script for training and evaluating all models
+- `result_analysis.py`      # script for analyzing results and generating the figures seen in the paper
