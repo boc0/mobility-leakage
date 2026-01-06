@@ -21,3 +21,4 @@ Graph-Flashback/.idea/*
 Graph-Flashback/.vscode/*
 *.patch
 mobleak.egg-info/*
+tex/*

@@ -7,7 +7,7 @@ name = "mobleak"
 version = "0.1.0"
 description = "Utilities and experiments for mobility leakage research"
 requires-python = ">=3.9"
-authors = [{ name = "Hristo Boyadzhiev" }]
+authors = [{ name = "XXXX-1 XXXX-2" }]
 license = { file = "DeepMove/LICENSE" }
 keywords = ["mobility", "trajectory", "privacy"]
 classifiers = [

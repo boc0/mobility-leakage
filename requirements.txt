@@ -1,5 +1,5 @@
 networkx==3.4.2
-pandas==2.2.3
+pandas==2.3.1
 numpy==2.3.3
 subprocess-run
 geopandas==1.0.1
@@ -10,3 +10,15 @@ jupyter
 matplotlib
 seaborn
 joypy
+openpyxl
+spacy==3.7.2
+nltk==3.8.1
+flatten_dict
+sentence-transformers
+textstat 
+language_tool_python 
+transformers 
+hdbscan
+haversine
+geopy
+fastdtw
