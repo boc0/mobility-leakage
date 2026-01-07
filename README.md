@@ -1,7 +1,7 @@
 # Secrets Everywhere: Auditing Memorization in Mobility Prediction Models
 
 This repository contains the full experimental artifact for the paper  
-**“Secrets Everywhere: Auditing Memorization in Mobility Prediction Models”**, submitted to ACM CCS.
+**“Secrets Everywhere: Auditing Memorization in Mobility Prediction Models”**.
 
 The code evaluates mobility (next-location) prediction models for
 **memorization of training data**, following the methodology described in the paper.
@@ -15,11 +15,11 @@ and computing trajectory-level memorization metrics and extractability signals.
 
 The repository is organized as a **three-stage pipeline**:
 
-1. **Data processing and reference-set construction**
+1. **Data processing and reference-set construction**  
 ├── 1-data_processing/        # dataset normalization, preprocessing, reference sets
-2. **Model training and memorization computation**
+2. **Model training and memorization computation**  
 ├── 2-predictive_models/      # model implementations and memorization computation
-3. **Result analysis and figure generation**
+3. **Result analysis and figure generation**  
 ├── 3-result_analysis.py      # aggregation and plotting of final results
 
 ---
