@@ -1,24 +1,22 @@
-DeepMove/codes\ old/*
-DeepMove/data/foursquare/*
+2-predictive_models/DeepMove/codes\ old/*
+2-predictive_models/DeepMove/data/foursquare/*
+2-predictive_models/Graph-Flashback/data
+2-predictive_models/Graph-Flashback/dataset/*
+2-predictive_models/Graph-Flashback/.idea/*
+2-predictive_models/Graph-Flashback/.vscode/*
+2-predictive_models/LSTPM/train/data/*
 *.DS_Store*
 results
+analysis_outputs/*
 *.pk
 *.pkl
 *.m
 *.csv
 *.pyc
-LSTPM/train/data/*
 *.json
 *.zip
-results/*
-runs/*
 *venv*
 *.sif
-analysis_outputs/*
-Graph-Flashback/data
-Graph-Flashback/dataset/*
-Graph-Flashback/.idea/*
-Graph-Flashback/.vscode/*
 *.patch
 mobleak.egg-info/*
 tex/*
