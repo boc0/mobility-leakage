@@ -16,10 +16,9 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "luigi>=3.6.0",
     "torch==2.6.0",
     "networkx==3.4.2",
-    "pandas==2.2.3",
+    "pandas==2.3.1",
     "numpy==2.3.3",
     "geopandas==1.0.1",
     "tqdm==4.67.1",
@@ -27,7 +26,20 @@ dependencies = [
     "jupyter",
     "matplotlib",
     "seaborn",
-    "joypy"
+    "joypy",
+    "subprocess-run",
+    "openpyxl",
+    "spacy==3.7.2",
+    "nltk==3.8.1",
+    "flatten_dict",
+    "sentence-transformers",
+    "textstat",
+    "language_tool_python",
+    "transformers",
+    "hdbscan",
+    "haversine",
+    "geopy",
+    "fastdtw"
 ]
 
 [tool.setuptools]
